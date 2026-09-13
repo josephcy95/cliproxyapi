@@ -28,6 +28,7 @@ var KnownAPIProviderIDs = []string{
 	"claude",
 	"gemini",
 	"codex",
+	"commandcode",
 	"xai",
 	"gemini-interactions",
 	"vertex",

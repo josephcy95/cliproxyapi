@@ -525,3 +525,50 @@ func TestCommandCodeHeaderOverride(t *testing.T) {
 		t.Errorf("x-command-code-version = %q, want the configured override", got)
 	}
 }
+
+// TestCommandCodeModelUpstreamModelResolvesAlias pins the alias -> upstream
+// mapping. It is load-bearing: the conductor's alias tables have no
+// "commandcode" case, so the requested model reaches the executor verbatim and
+// this function is the only thing standing between a client's alias and an
+// invalid upstream model name. Verified live by capturing the outbound request
+// for a configured alias (`cc-flash` -> `deepseek/deepseek-v4-flash`).
+func TestCommandCodeModelUpstreamModelResolvesAlias(t *testing.T) {
+	models := []commandCodeTestModelEntry{
+		{name: "deepseek/deepseek-v4-flash", alias: "cc-flash"},
+		{name: "deepseek/deepseek-v4-pro"},
+	}
+
+	cases := []struct {
+		name      string
+		requested string
+		fallback  string
+		want      string
+	}{
+		{"alias resolves to upstream name", "cc-flash", "unused", "deepseek/deepseek-v4-flash"},
+		{"alias match is case-insensitive", "CC-FLASH", "unused", "deepseek/deepseek-v4-flash"},
+		{"upstream name passes through", "deepseek/deepseek-v4-pro", "unused", "deepseek/deepseek-v4-pro"},
+		{"entry without an alias uses its own name", "deepseek/deepseek-v4-pro", "unused", "deepseek/deepseek-v4-pro"},
+		// An unmatched model passes through unchanged: the configured list may be
+		// a subset of the live catalog, so a valid-but-unlisted name must not be
+		// rewritten. The fallback only applies when nothing was requested.
+		{"unmatched model passes through", "not-configured", "fallback-model", "not-configured"},
+		{"empty requested uses the fallback", "", "fallback-model", "fallback-model"},
+		{"empty requested with no fallback stays empty", "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CommandCodeModelUpstreamModel(models, tc.requested, tc.fallback); got != tc.want {
+				t.Errorf("upstream model for %q = %q, want %q", tc.requested, got, tc.want)
+			}
+		})
+	}
+}
+
+// commandCodeTestModelEntry satisfies CommandCodeModelEntry for the alias test.
+type commandCodeTestModelEntry struct {
+	name  string
+	alias string
+}
+
+func (m commandCodeTestModelEntry) GetName() string  { return m.name }
+func (m commandCodeTestModelEntry) GetAlias() string { return m.alias }
