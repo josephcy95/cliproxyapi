@@ -212,6 +212,7 @@ func baselineExecutorAuths() []*coreauth.Auth {
 		"qodercn",
 		"qoder",
 		"openai-compatibility",
+		constant.CommandCode,
 	}
 	auths := make([]*coreauth.Auth, 0, len(providers))
 	for _, provider := range providers {
@@ -309,6 +310,8 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		s.coreManager.RegisterExecutor(executor.NewQoderCNExecutor(cfg))
 	case "qoder":
 		s.coreManager.RegisterExecutor(executor.NewQoderExecutor(cfg))
+	case constant.CommandCode:
+		s.coreManager.RegisterExecutor(executor.NewCommandCodeExecutor(cfg))
 	default:
 		providerKey := strings.ToLower(strings.TrimSpace(a.Provider))
 		if providerKey == "" {

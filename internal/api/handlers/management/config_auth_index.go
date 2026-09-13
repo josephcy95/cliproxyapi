@@ -28,6 +28,11 @@ type xaiKeyWithAuthIndex struct {
 	AuthIndex string `json:"auth-index,omitempty"`
 }
 
+type commandCodeKeyWithAuthIndex struct {
+	config.CommandCodeKey
+	AuthIndex string `json:"auth-index,omitempty"`
+}
+
 type vertexCompatKeyWithAuthIndex struct {
 	config.VertexCompatKey
 	AuthIndex string `json:"auth-index,omitempty"`
@@ -246,6 +251,43 @@ func (h *Handler) xaiKeysWithAuthIndex() []xaiKeyWithAuthIndex {
 		out[i] = xaiKeyWithAuthIndex{
 			XAIKey:    entry,
 			AuthIndex: authIndex,
+		}
+	}
+	return out
+}
+
+// commandCodeKeysWithAuthIndex returns the configured Command Code credentials
+// together with the live auth index each one resolves to. The id generator must
+// use the same kind and argument order as synthesizeCommandCode, otherwise the
+// dashboard loses the mapping between a config entry and its runtime auth.
+func (h *Handler) commandCodeKeysWithAuthIndex() []commandCodeKeyWithAuthIndex {
+	if h == nil {
+		return nil
+	}
+	liveIndexByID := h.liveAuthIndexByID()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.cfg == nil {
+		return nil
+	}
+
+	idGen := synthesizer.NewStableIDGenerator()
+	out := make([]commandCodeKeyWithAuthIndex, len(h.cfg.CommandCodeKey))
+	for i := range h.cfg.CommandCodeKey {
+		entry := h.cfg.CommandCodeKey[i]
+		authIndex := ""
+		key := strings.TrimSpace(entry.APIKey)
+		base := strings.TrimSpace(entry.BaseURL)
+		proxyURL := strings.TrimSpace(entry.ProxyURL)
+		prefix := strings.TrimSpace(entry.Prefix)
+		if key != "" || base != "" {
+			id, _ := idGen.Next("commandcode:apikey", key, base, proxyURL, prefix, config.FormatSortedHeaders(entry.Headers))
+			authIndex = liveIndexByID[id]
+		}
+		out[i] = commandCodeKeyWithAuthIndex{
+			CommandCodeKey: entry,
+			AuthIndex:      authIndex,
 		}
 	}
 	return out

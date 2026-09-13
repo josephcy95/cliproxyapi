@@ -92,6 +92,17 @@ func TestPatchDisableCoolingOverrideForEveryFamily(t *testing.T) {
 			patch: (*Handler).PatchXAIKey,
 			get:   func(cfg *config.Config) *bool { return cfg.XAIKey[0].DisableCooling },
 		},
+		{
+			name: "commandcode",
+			setup: func(cfg *config.Config) {
+				cfg.CommandCodeKey = []config.CommandCodeKey{{
+					APIKey:         "key",
+					DisableCooling: &initial,
+				}}
+			},
+			patch: (*Handler).PatchCommandCodeKey,
+			get:   func(cfg *config.Config) *bool { return cfg.CommandCodeKey[0].DisableCooling },
+		},
 	}
 
 	for _, tc := range tests {

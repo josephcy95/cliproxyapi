@@ -801,6 +801,25 @@ nonstream-keepalive-interval: 0
 #       - name: "kimi-k2.5"
 #         alias: "claude-opus-4.66"
 
+# Command Code API keys (CLI-mimic transport)
+# Command Code's "Go" plan has no OpenAI-compatible endpoint, so these credentials
+# are served by posting the Command Code CLI envelope to {base-url}/alpha/generate.
+# Higher plans (GOAT/Pro/Provider/Max/Ultra) should instead use openai-compatibility
+# with base-url "https://api.commandcode.ai/provider/v1".
+# commandcode-api-key:
+#   - api-key: "user_xxxxxxxx"
+#     base-url: "https://api.commandcode.ai"   # optional; this is the default
+#     weight: 5                                 # optional: weighted-round-robin share; omitted defaults to 1
+#     prefix: "cc"                              # optional: require calls like "cc/cc-flash" to target this credential
+#     proxy-url: "socks5://proxy.example.com:1080" # optional per-key proxy override
+#     headers: {}                               # optional extra headers; "x-command-code-version" overrides the pinned CLI version
+#     models:                                   # the models supported by this credential
+#       - name: "deepseek/deepseek-v4-flash"    # upstream model name
+#         alias: "cc-flash"                     # client-visible alias
+#         display-name: "Command Code Flash"     # optional catalog display name
+#         thinking:                              # optional: exact thinking capability for this configured model
+#           levels: ["low", "medium", "high"]
+
 # Vertex API keys (Vertex-compatible endpoints, base-url is optional)
 # vertex-api-key:
 #   - api-key: "vk-123..."                        # x-goog-api-key header

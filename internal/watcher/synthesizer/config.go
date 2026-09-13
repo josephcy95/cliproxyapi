@@ -54,6 +54,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeXAIKeys(ctx)...)
 	// OpenAI-compat
 	out = append(out, s.synthesizeOpenAICompat(ctx)...)
+	// Command Code CLI-mimic provider
+	out = append(out, s.synthesizeCommandCode(ctx)...)
 	// Vertex-compat
 	out = append(out, s.synthesizeVertexCompat(ctx)...)
 
@@ -395,6 +397,74 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 			}
 			out = append(out, a)
 		}
+	}
+	return out
+}
+
+// synthesizeCommandCode creates Auth entries for Command Code providers that are
+// served with static API keys.
+//
+// The attributes deliberately omit "compat_name": registerExecutorForAuth checks
+// the OpenAI-compat branch before the provider switch, so setting compat_name
+// would bind these auths to the OpenAI-compat executor and the dedicated
+// commandcode executor would never run.
+func (s *ConfigSynthesizer) synthesizeCommandCode(ctx *SynthesisContext) []*coreauth.Auth {
+	cfg := ctx.Config
+	now := ctx.Now
+	idGen := ctx.IDGenerator
+
+	out := make([]*coreauth.Auth, 0, len(cfg.CommandCodeKey))
+	for i := range cfg.CommandCodeKey {
+		entry := cfg.CommandCodeKey[i]
+		key := strings.TrimSpace(entry.APIKey)
+		base := strings.TrimSpace(entry.BaseURL)
+		if key == "" && base == "" {
+			continue
+		}
+		prefix := strings.TrimSpace(entry.Prefix)
+		proxyURL := strings.TrimSpace(entry.ProxyURL)
+		id, token := idGen.Next("commandcode:apikey", key, base, proxyURL, prefix, config.FormatSortedHeaders(entry.Headers))
+		attrs := map[string]string{
+			"source":       fmt.Sprintf("config:commandcode[%s]", token),
+			"config_index": strconv.Itoa(i),
+		}
+		if key != "" {
+			attrs["api_key"] = key
+		}
+		if base != "" {
+			attrs["base_url"] = base
+		}
+		metadata := map[string]any{}
+		if entry.DisableCooling != nil {
+			metadata["disable_cooling"] = *entry.DisableCooling
+		}
+		addRequestRetryToMetadata(entry.RequestRetry, metadata)
+		addRequestScopedErrorsToMetadata(entry.RequestScopedErrors, metadata)
+		if entry.Priority != 0 {
+			attrs["priority"] = strconv.Itoa(entry.Priority)
+		}
+		addWeightToAttrs(entry.Weight, attrs)
+		if hash := diff.ComputeCodexModelsHash(entry.Models); hash != "" {
+			attrs["models_hash"] = hash
+		}
+		addConfigHeadersToAttrs(entry.Headers, attrs)
+		a := &coreauth.Auth{
+			ID:         id,
+			Provider:   constant.CommandCode,
+			Label:      constant.CommandCode + "-apikey",
+			Prefix:     prefix,
+			Status:     coreauth.StatusActive,
+			ProxyURL:   proxyURL,
+			Attributes: attrs,
+			Metadata:   metadata,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		ApplyAuthExcludedModelsMeta(a, cfg, entry.ExcludedModels, "apikey")
+		if len(a.Metadata) == 0 {
+			a.Metadata = nil
+		}
+		out = append(out, a)
 	}
 	return out
 }

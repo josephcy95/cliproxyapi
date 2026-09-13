@@ -169,6 +169,11 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize xAI keys: drop entries without base-url
 	cfg.SanitizeXAIKeys()
 
+	// Sanitize Command Code keys. Unlike Codex/xAI this keeps entries without a
+	// base-url, because the Command Code base URL is optional and defaults to
+	// the public API host.
+	cfg.SanitizeCommandCodeKeys()
+
 	// Sanitize Codex header defaults.
 	cfg.SanitizeCodexHeaderDefaults()
 

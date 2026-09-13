@@ -802,3 +802,10 @@ func (m OpenAICompatibilityModel) GetForceMapping() bool    { return m.ForceMapp
 func (m OpenAICompatibilityModel) GetIsCompat() bool        { return m.IsCompat }
 
 func (m OpenAICompatibilityModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }
+
+// CommandCodeKey uses the Codex API key structure for Command Code execution.
+// Command Code authenticates with a static "user_..." API key and has no OAuth flow.
+type CommandCodeKey = CodexKey
+
+// CommandCodeModel uses the Codex model mapping structure for Command Code models.
+type CommandCodeModel = CodexModel

@@ -117,6 +117,7 @@ codex-api-key: []
 claude-api-key: []
 vertex-api-key: []
 openai-compatibility: []
+commandcode-api-key: []
 
 claude-header-defaults: {}
 codex-header-defaults: {}

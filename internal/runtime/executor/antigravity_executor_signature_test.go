@@ -614,7 +614,6 @@ func TestAntigravityStreamDoesNotPrependLeadingUserForClaudeTarget(t *testing.T)
 	}
 }
 
-
 func TestAntigravityCountTokensMatchesTargetLeadingUserPolicy(t *testing.T) {
 	tests := []struct {
 		name      string

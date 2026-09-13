@@ -27,4 +27,7 @@ const (
 
 	// Interactions represents the Google Interactions API format identifier.
 	Interactions = "interactions"
+
+	// CommandCode represents the Command Code CLI-mimic provider identifier.
+	CommandCode = "commandcode"
 )

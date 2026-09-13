@@ -10,6 +10,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/modelconfig"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
@@ -162,6 +163,16 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		models = applyExcludedModels(models, excluded)
 	case "qoder":
 		models = executor.FetchQoderIntlModels(ctx, a, s.cfg)
+		models = applyExcludedModels(models, excluded)
+	case constant.CommandCode:
+		// The live anonymous catalog is preferred so a fresh credential is usable
+		// without hand-enumerating models; an explicit models: list overrides it
+		// because that is where aliases are declared.
+		if entry := resolveCommandCodeConfigForAuth(s.cfg, a); entry != nil && len(entry.Models) > 0 {
+			models = buildCommandCodeConfigModels(entry)
+		} else {
+			models = helps.FetchCommandCodeModels(ctx, a, s.cfg)
+		}
 		models = applyExcludedModels(models, excluded)
 	default:
 		// Handle OpenAI-compatibility providers by name using config
@@ -884,6 +895,43 @@ func mergeResolvedModelInfo(info, resolved *ModelInfo) {
 	if len(info.SupportedOutputModalities) == 0 && len(resolved.SupportedOutputModalities) > 0 {
 		info.SupportedOutputModalities = resolved.SupportedOutputModalities
 	}
+}
+
+// resolveCommandCodeConfigForAuth finds the Command Code config entry backing an
+// auth using the config index plus a credential-match fallback.
+func resolveCommandCodeConfigForAuth(cfg *config.Config, auth *coreauth.Auth) *config.CommandCodeKey {
+	if cfg == nil || auth == nil {
+		return nil
+	}
+	if entry := configEntryForAuthIndex(auth, cfg.CommandCodeKey); entry != nil {
+		return entry
+	}
+	attrKey := ""
+	attrBase := ""
+	if auth.Attributes != nil {
+		attrKey = strings.TrimSpace(auth.Attributes["api_key"])
+		attrBase = strings.TrimSpace(auth.Attributes["base_url"])
+	}
+	for i := range cfg.CommandCodeKey {
+		entry := &cfg.CommandCodeKey[i]
+		if attrKey == "" || !strings.EqualFold(strings.TrimSpace(entry.APIKey), attrKey) {
+			continue
+		}
+		if attrBase == "" || strings.EqualFold(strings.TrimSpace(entry.BaseURL), attrBase) {
+			return entry
+		}
+	}
+	return nil
+}
+
+// buildCommandCodeConfigModels maps configured Command Code models into registry
+// entries. The upstream surface has no plan-aware model catalog to fetch, so the
+// configured list is authoritative.
+func buildCommandCodeConfigModels(entry *config.CommandCodeKey) []*ModelInfo {
+	if entry == nil {
+		return nil
+	}
+	return buildConfigModels(entry.Models, constant.CommandCode, constant.CommandCode)
 }
 
 func buildVertexCompatConfigModels(entry *config.VertexCompatKey) []*ModelInfo {

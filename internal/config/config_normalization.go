@@ -165,6 +165,33 @@ func sanitizeCodexKeyEntries(entries []CodexKey) []CodexKey {
 	return out
 }
 
+// SanitizeCommandCodeKeys normalizes Command Code API key entries.
+//
+// Unlike SanitizeCodexKeys it must NOT drop entries missing a BaseURL: the
+// Command Code base URL is optional and defaults to the public API host, so an
+// omitted value is valid configuration rather than a removed credential.
+// Dropping on an empty BaseURL would silently delete the credentials of every
+// user who relies on the default.
+func (cfg *Config) SanitizeCommandCodeKeys() {
+	if cfg == nil || len(cfg.CommandCodeKey) == 0 {
+		return
+	}
+	for i := range cfg.CommandCodeKey {
+		entry := &cfg.CommandCodeKey[i]
+		entry.APIKey = strings.TrimSpace(entry.APIKey)
+		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
+		entry.Prefix = normalizeModelPrefix(entry.Prefix)
+		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
+		entry.Headers = NormalizeHeaders(entry.Headers)
+		entry.ExcludedModels = NormalizeExcludedModels(entry.ExcludedModels)
+		// Websockets and AlphaSearch belong to the Codex wire protocol and mean
+		// nothing here; clear them so the shared entry shape cannot smuggle them
+		// into this provider's config.
+		entry.Websockets = false
+		entry.AlphaSearch = false
+	}
+}
+
 // SanitizeClaudeKeys normalizes headers for Claude credentials.
 func (cfg *Config) SanitizeClaudeKeys() {
 	if cfg == nil || len(cfg.ClaudeKey) == 0 {
