@@ -7,6 +7,25 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func TestOAuthProvidersIncludeDevinCallbackLogin(t *testing.T) {
+	var found *oauthProvider
+	for i := range oauthProviders {
+		if oauthProviders[i].apiPath == "devin-auth-url" {
+			found = &oauthProviders[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("oauthProviders is missing Devin (devin-auth-url)")
+	}
+	if found.name != "Devin" {
+		t.Fatalf("Devin name = %q, want Devin", found.name)
+	}
+	if found.deviceFlow {
+		t.Fatal("Devin uses the browser callback flow, not device-code")
+	}
+}
+
 func TestShouldAcceptOAuthPollFiltersStaleMessages(t *testing.T) {
 	msg := oauthPollMsg{state: "state-a", generation: 1, done: true, message: "ok"}
 
