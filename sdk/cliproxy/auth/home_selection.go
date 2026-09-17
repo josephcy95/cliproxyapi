@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executionregistry"
 )
 
@@ -142,6 +143,7 @@ type HomeDispatchSelection struct {
 	Provider           string
 	CanonicalSessionID string
 	ParentSessionID    string
+	modelInfo          *registry.ModelInfo
 
 	authMu           sync.RWMutex
 	scope            *executionregistry.Scope

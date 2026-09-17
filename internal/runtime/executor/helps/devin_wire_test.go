@@ -824,3 +824,54 @@ func TestParseDevinResponseDimensionGroups_UnrelatedGroup(t *testing.T) {
 		t.Errorf("expected found = false for unrelated group, got true with prompt=%d, comp=%d, cached=%d", promptTokens, completionTokens, cachedTokens)
 	}
 }
+
+func TestBuildDevinGetChatMessageRequest_FiltersAutomationUpdateAndObfuscatesDescriptions(t *testing.T) {
+	tools := []DevinTool{
+		{
+			Name:        "mcp__codex_app__automation_update",
+			Description: "Recurring automations",
+			Parameters:  []byte(`{"type":"object"}`),
+		},
+		{
+			Name:        "exec_command",
+			Description: "Runs a command in a bash shell, returning output or a session ID for ongoing interaction.",
+			Parameters:  []byte(`{"type":"object"}`),
+		},
+		{
+			Name:        "write_stdin",
+			Description: "Writes characters to an existing unified exec session and returns recent output.",
+			Parameters:  []byte(`{"type":"object"}`),
+		},
+	}
+
+	req := BuildDevinGetChatMessageRequest(
+		"token-123",
+		"device-seed-1",
+		"swe-2",
+		"system prompt",
+		nil,
+		tools,
+		nil,
+		1000,
+		"session-1",
+		"cascade-1",
+		nil,
+	)
+
+	reqStr := string(req)
+	if strings.Contains(reqStr, "automation_update") {
+		t.Fatalf("wire bytes should not contain automation_update")
+	}
+	if strings.Contains(reqStr, "a session ID") {
+		t.Fatalf("wire bytes should not contain 'a session ID'")
+	}
+	if !strings.Contains(reqStr, "an session ID") {
+		t.Fatalf("wire bytes should contain 'an session ID'")
+	}
+	if strings.Contains(reqStr, "to an existing unified") {
+		t.Fatalf("wire bytes should not contain 'to an existing unified'")
+	}
+	if !strings.Contains(reqStr, "to a existing unified") {
+		t.Fatalf("wire bytes should contain 'to a existing unified'")
+	}
+}

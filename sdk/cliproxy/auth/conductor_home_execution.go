@@ -118,6 +118,7 @@ func (m *Manager) executeHome(ctx context.Context, providers []string, req clipr
 			}
 			if !restoreExecutionModel {
 				execReq = attachResolvedAPIKeyModelInfo(routing, execReq, preparedAuth, routeModel, upstreamModel)
+				execReq = attachResolvedHomeModelInfo(execReq, selection.modelInfo)
 			}
 			if errCtx := execCtx.Err(); errCtx != nil {
 				releaseAttempt()

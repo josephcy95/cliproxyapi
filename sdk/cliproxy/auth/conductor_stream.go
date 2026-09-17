@@ -269,6 +269,9 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		}
 		if executionModel == "" {
 			execReq = attachResolvedAPIKeyModelInfo(routing, execReq, auth, routeModel, execModel)
+			if selection, ok := opts.ExecutionLifecycle.(*HomeDispatchSelection); ok && selection != nil {
+				execReq = attachResolvedHomeModelInfo(execReq, selection.modelInfo)
+			}
 		}
 		if errCtx := ctx.Err(); errCtx != nil {
 			m.releaseCodexAdaptiveLease(opts)

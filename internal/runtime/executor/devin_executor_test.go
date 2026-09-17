@@ -2001,3 +2001,170 @@ func TestStreamDevinFrames_LateThinkingSignatures_TrailerErrorClosesBlocks(t *te
 		})
 	}
 }
+
+func TestDevinExecutor_ResponsesNamespaceToolsFlattenedInUpstreamRequest(t *testing.T) {
+	responsesPayload := []byte(`{
+		"model": "devin/gemini-3-7-flash",
+		"tools": [
+			{
+				"type": "function",
+				"name": "exec_command",
+				"description": "Execute a command",
+				"parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}
+			},
+			{
+				"type": "namespace",
+				"name": "multi_agent_v1",
+				"description": "Multi agent tools",
+				"tools": [
+					{
+						"type": "function",
+						"name": "close_agent",
+						"description": "Close an agent",
+						"parameters": {"type": "object", "properties": {"target": {"type": "string"}}}
+					},
+					{
+						"type": "function",
+						"name": "resume_agent",
+						"description": "Resume an agent",
+						"parameters": {"type": "object", "properties": {"id": {"type": "string"}}}
+					}
+				]
+			}
+		],
+		"input": [
+			{"type": "message", "role": "user", "content": "hello"}
+		]
+	}`)
+
+	interactionsJSON := sdktranslator.TranslateRequest(sdktranslator.FormatOpenAIResponse, sdktranslator.FormatInteractions, "devin/gemini-3-7-flash", responsesPayload, false)
+	systemPrompt, prompts, tools, temp, maxTokens, sessionID, cascadeID, _, _ := parseInteractionsPayload(interactionsJSON, responsesPayload)
+
+	if len(tools) != 3 {
+		t.Fatalf("expected 3 tools, got %d", len(tools))
+	}
+
+	for i, tool := range tools {
+		if tool.Name == "" {
+			t.Fatalf("tool %d has empty Name", i)
+		}
+	}
+
+	logBody := helps.BuildDevinUpstreamLogBody(
+		interactionsJSON,
+		false,
+		"gemini-3-7-flash",
+		systemPrompt,
+		prompts,
+		tools,
+		temp,
+		maxTokens,
+		sessionID,
+		cascadeID,
+	)
+
+	logBodyStr := string(logBody)
+	if strings.Contains(logBodyStr, `"name": ""`) {
+		t.Fatalf("devin upstream log body contains empty tool name: %s", logBodyStr)
+	}
+}
+
+func TestDevinExecutor_ResponsesToolsFilterAndObfuscate(t *testing.T) {
+	responsesPayload := []byte(`{
+		"model": "devin/swe-2",
+		"tools": [
+			{
+				"type": "namespace",
+				"name": "mcp__codex_app",
+				"description": "Codex App tools",
+				"tools": [
+					{
+						"type": "function",
+						"name": "automation_update",
+						"description": "Recurring automations",
+						"parameters": {"type": "object", "properties": {"id": {"type": "string"}}}
+					},
+					{
+						"type": "function",
+						"name": "read_resource",
+						"description": "Read a resource",
+						"parameters": {"type": "object", "properties": {"uri": {"type": "string"}}}
+					}
+				]
+			},
+			{
+				"type": "function",
+				"name": "exec_command",
+				"description": "Runs a command in a bash shell, returning output or a session ID for ongoing interaction.",
+				"parameters": {
+					"type": "object",
+					"properties": {"cmd": {"type": "string"}},
+					"required": ["cmd"]
+				}
+			},
+			{
+				"type": "function",
+				"name": "write_stdin",
+				"description": "Writes characters to an existing unified exec session and returns recent output.",
+				"parameters": {
+					"type": "object",
+					"properties": {"session_id": {"type": "string"}},
+					"required": ["session_id"]
+				}
+			}
+		],
+		"input": [
+			{"type": "message", "role": "user", "content": "hello"}
+		]
+	}`)
+
+	interactionsJSON := sdktranslator.TranslateRequest(sdktranslator.FormatOpenAIResponse, sdktranslator.FormatInteractions, "devin/swe-2", responsesPayload, false)
+	systemPrompt, prompts, tools, temp, maxTokens, sessionID, cascadeID, _, _ := parseInteractionsPayload(interactionsJSON, responsesPayload)
+
+	// 1. automation_update must be filtered out, leaving read_resource, exec_command, write_stdin
+	if len(tools) != 3 {
+		t.Fatalf("expected 3 tools, got %d", len(tools))
+	}
+
+	for _, tool := range tools {
+		if strings.Contains(tool.Name, "automation_update") {
+			t.Fatalf("unexpected automation_update tool in Devin tools: %s", tool.Name)
+		}
+		if tool.Name == "exec_command" {
+			want := "Runs a command in a bash shell, returning output or an session ID for ongoing interaction."
+			if tool.Description != want {
+				t.Fatalf("exec_command description = %q, want %q", tool.Description, want)
+			}
+		}
+		if tool.Name == "write_stdin" {
+			want := "Writes characters to a existing unified exec session and returns recent output."
+			if tool.Description != want {
+				t.Fatalf("write_stdin description = %q, want %q", tool.Description, want)
+			}
+		}
+	}
+
+	logBody := helps.BuildDevinUpstreamLogBody(
+		interactionsJSON,
+		false,
+		"swe-2",
+		systemPrompt,
+		prompts,
+		tools,
+		temp,
+		maxTokens,
+		sessionID,
+		cascadeID,
+	)
+
+	logBodyStr := string(logBody)
+	if strings.Contains(logBodyStr, "automation_update") {
+		t.Fatalf("upstream log body should not contain automation_update: %s", logBodyStr)
+	}
+	if !strings.Contains(logBodyStr, "an session ID") {
+		t.Fatalf("upstream log body should contain 'an session ID': %s", logBodyStr)
+	}
+	if !strings.Contains(logBodyStr, "to a existing") {
+		t.Fatalf("upstream log body should contain 'to a existing': %s", logBodyStr)
+	}
+}

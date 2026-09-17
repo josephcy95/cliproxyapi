@@ -1491,15 +1491,53 @@ func parseInteractionsPayload(payload, originalRequest []byte) (
 	// 6. Tools
 	toolsRes := root.Get("tools")
 	if toolsRes.IsArray() {
-		for _, t := range toolsRes.Array() {
+		appendDevinTool := func(t gjson.Result) {
 			name := t.Get("name").String()
+			if name == "" || translatorcommon.IsDevinCodexAppAutomationUpdate("", name) {
+				return
+			}
 			desc := t.Get("description").String()
+			desc = translatorcommon.SanitizeDevinToolDescription(name, desc)
 			params := t.Get("parameters").Raw
+			if len(params) == 0 {
+				params = t.Get("parametersJsonSchema").Raw
+			}
 			tools = append(tools, helps.DevinTool{
 				Name:        name,
 				Description: desc,
 				Parameters:  []byte(params),
 			})
+		}
+		for _, t := range toolsRes.Array() {
+			if t.Get("type").String() == "namespace" && strings.EqualFold(strings.TrimSpace(t.Get("name").String()), "mcp__codex_app") {
+				children := t.Get("tools")
+				if !children.Exists() || !children.IsArray() {
+					children = t.Get("children")
+				}
+				if children.Exists() && children.IsArray() {
+					for _, c := range children.Array() {
+						childName := c.Get("name").String()
+						if strings.EqualFold(strings.TrimSpace(childName), "automation_update") {
+							continue
+						}
+						appendDevinTool(c)
+					}
+				}
+				continue
+			}
+			if decls := t.Get("function_declarations"); decls.Exists() && decls.IsArray() {
+				for _, d := range decls.Array() {
+					appendDevinTool(d)
+				}
+				continue
+			}
+			if decls := t.Get("functionDeclarations"); decls.Exists() && decls.IsArray() {
+				for _, d := range decls.Array() {
+					appendDevinTool(d)
+				}
+				continue
+			}
+			appendDevinTool(t)
 		}
 	}
 
