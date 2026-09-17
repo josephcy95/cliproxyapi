@@ -99,8 +99,15 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
 	}
 	auth.EnsureIndex()
-	authClone := auth.Clone()
 	m.mu.Lock()
+	if existing, ok := m.auths[auth.ID]; ok && existing != nil {
+		if auth.RegistrationEpoch <= existing.RegistrationEpoch {
+			auth.RegistrationEpoch = existing.RegistrationEpoch + 1
+		}
+	} else if auth.RegistrationEpoch == 0 {
+		auth.RegistrationEpoch = 1
+	}
+	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
 	m.mu.Unlock()
 	if !shouldDeferAPIKeyModelAliasRebuild(ctx) {
@@ -116,6 +123,43 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 		m.persistCooldownStates(ctx)
 	}
 	return auth.Clone(), nil
+}
+
+func (m *Manager) rejectStaleAuthUpdate(base, updated *Auth) error {
+	if m == nil || updated == nil || updated.ID == "" {
+		return nil
+	}
+	m.mu.RLock()
+	existing, ok := m.auths[updated.ID]
+	m.mu.RUnlock()
+	if !ok || existing == nil {
+		return fmt.Errorf("update auth %s: credential removed", updated.ID)
+	}
+	if base != nil && existing.RegistrationEpoch != base.RegistrationEpoch {
+		return fmt.Errorf("update auth %s: stale registration epoch %d != %d", updated.ID, base.RegistrationEpoch, existing.RegistrationEpoch)
+	}
+	if updated.RegistrationEpoch != 0 && updated.RegistrationEpoch < existing.RegistrationEpoch {
+		return fmt.Errorf("update auth %s: stale registration epoch %d < %d", updated.ID, updated.RegistrationEpoch, existing.RegistrationEpoch)
+	}
+	return nil
+}
+
+// UpdatePreparedAuth persists a request-time credential mint using the same
+// update path as a normal in-memory update, rejecting obsolete mints.
+func (m *Manager) UpdatePreparedAuth(ctx context.Context, base, updated *Auth) (*Auth, error) {
+	if err := m.rejectStaleAuthUpdate(base, updated); err != nil {
+		return nil, err
+	}
+	return m.Update(ctx, updated)
+}
+
+// UpdateRefreshedAuth persists a refreshed credential using the same update path
+// as a normal in-memory update, rejecting obsolete mints.
+func (m *Manager) UpdateRefreshedAuth(ctx context.Context, base, updated *Auth) (*Auth, error) {
+	if err := m.rejectStaleAuthUpdate(base, updated); err != nil {
+		return nil, err
+	}
+	return m.Update(ctx, updated)
 }
 
 // Update replaces an existing auth entry and notifies hooks.
@@ -201,6 +245,16 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged || replaceRuntime
 	}
 	auth.EnsureIndex()
+	// A minted Meta key must reach the configured store before requests can use it.
+	// Keep the epoch check, save and installation together so a concurrent reload
+	// or removal cannot let an obsolete mint overwrite the credential on disk.
+	persistMetaMint := strings.EqualFold(strings.TrimSpace(auth.Provider), "meta")
+	if persistMetaMint {
+		if errPersist := m.persist(ctx, auth); errPersist != nil {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("persist meta auth: %w", errPersist)
+		}
+	}
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
 	m.mu.Unlock()
@@ -211,7 +265,9 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 		m.scheduler.upsertAuth(authClone)
 	}
 	m.queueRefreshReschedule(auth.ID)
-	_ = m.persist(ctx, auth)
+	if !persistMetaMint {
+		_ = m.persist(ctx, auth)
+	}
 	m.hook.OnAuthUpdated(ctx, auth.Clone())
 	if cooldownStateChanged {
 		m.persistCooldownStates(ctx)

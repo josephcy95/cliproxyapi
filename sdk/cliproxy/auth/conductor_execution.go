@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -286,8 +287,12 @@ func requestToFormat(provider string, executor ProviderExecutor, req cliproxyexe
 		return sdktranslator.FormatGemini
 	case "kimi":
 		return sdktranslator.FormatOpenAI
+	case "meta":
+		return sdktranslator.FormatCodex
 	case "antigravity":
 		return sdktranslator.FormatAntigravity
+	case "devin":
+		return sdktranslator.FormatInteractions
 	default:
 		return sdktranslator.FormatOpenAI
 	}
@@ -1059,7 +1064,17 @@ func (m *Manager) prepareRequestAuth(ctx context.Context, executor ProviderExecu
 		return auth, nil
 	}
 	preparer, ok := executor.(RequestAuthPreparer)
-	if !ok || preparer == nil || !preparer.ShouldPrepareRequestAuth(auth) {
+	if !ok {
+		return auth, nil
+	}
+
+	return m.PrepareRequestAuth(ctx, preparer, auth)
+}
+
+// PrepareRequestAuth prepares a registered credential using the same serialization
+// and lifecycle checks as normal request execution. Management tools use this path too.
+func (m *Manager) PrepareRequestAuth(ctx context.Context, preparer RequestAuthPreparer, auth *Auth) (*Auth, error) {
+	if m == nil || preparer == nil || auth == nil || !preparer.ShouldPrepareRequestAuth(auth) {
 		return auth, nil
 	}
 
@@ -1068,21 +1083,28 @@ func (m *Manager) prepareRequestAuth(ctx context.Context, executor ProviderExecu
 		return preparer.PrepareRequestAuth(ctx, auth.Clone())
 	}
 
-	lockValue, _ := m.requestPrepareLocks.LoadOrStore(id, &requestAuthPrepareLock{})
-	lock, ok := lockValue.(*requestAuthPrepareLock)
-	if !ok || lock == nil {
-		return preparer.PrepareRequestAuth(ctx, auth.Clone())
+	var prepareMu *sync.Mutex
+	if strings.EqualFold(strings.TrimSpace(auth.Provider), "meta") {
+		// Meta also mints on 401 recovery. Serialize both paths per credential.
+		lockValue, _ := m.refreshLocks.LoadOrStore(id, &authRefreshLock{})
+		prepareMu = &lockValue.(*authRefreshLock).mu
+	} else {
+		lockValue, _ := m.requestPrepareLocks.LoadOrStore(id, &requestAuthPrepareLock{})
+		prepareMu = &lockValue.(*requestAuthPrepareLock).mu
 	}
-
-	lock.mu.Lock()
-	defer lock.mu.Unlock()
+	prepareMu.Lock()
+	defer prepareMu.Unlock()
 
 	target := auth.Clone()
 	m.mu.RLock()
-	if current := m.auths[id]; current != nil {
+	current := m.auths[id]
+	if current != nil {
 		target = current.Clone()
 	}
 	m.mu.RUnlock()
+	if current == nil && strings.EqualFold(strings.TrimSpace(auth.Provider), "meta") {
+		return nil, fmt.Errorf("prepare meta auth: credential no longer registered")
+	}
 
 	if !preparer.ShouldPrepareRequestAuth(target) {
 		return target, nil
@@ -1096,14 +1118,17 @@ func (m *Manager) prepareRequestAuth(ctx context.Context, executor ProviderExecu
 		return target, nil
 	}
 
-	saved, errUpdate := m.Update(ctx, updated)
+	saved, errUpdate := m.UpdatePreparedAuth(ctx, target, updated)
 	if errUpdate != nil {
 		return updated, errUpdate
 	}
 	if saved != nil {
 		return saved, nil
 	}
-	return updated, nil
+	if strings.EqualFold(strings.TrimSpace(auth.Provider), "meta") {
+		return nil, fmt.Errorf("prepare meta auth: credential removed during mint")
+	}
+	return target, nil
 }
 
 func contextWithRequestedModelAlias(ctx context.Context, opts cliproxyexecutor.Options, fallback string) context.Context {

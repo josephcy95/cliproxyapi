@@ -146,6 +146,39 @@ func (cfg *Config) SanitizeXAIKeys() {
 	}
 }
 
+// SanitizeMetaKeys normalizes Meta API key entries, defaulting BaseURL to https://api.meta.ai/v1 if empty.
+func (cfg *Config) SanitizeMetaKeys() {
+	if cfg == nil {
+		return
+	}
+	cfg.MetaKey = sanitizeMetaKeyEntries(cfg.MetaKey)
+}
+
+func sanitizeMetaKeyEntries(entries []MetaKey) []MetaKey {
+	if len(entries) == 0 {
+		return entries
+	}
+	out := make([]MetaKey, 0, len(entries))
+	for i := range entries {
+		e := entries[i]
+		e.APIKey = strings.TrimSpace(e.APIKey)
+		// meta-api-key requires a valid API key. DCA tokens require OAuth storage (auths/*.json).
+		if e.APIKey == "" || strings.HasPrefix(e.APIKey, "dca:") {
+			continue
+		}
+		e.Prefix = normalizeModelPrefix(e.Prefix)
+		e.BaseURL = strings.TrimSpace(e.BaseURL)
+		if e.BaseURL == "" {
+			e.BaseURL = "https://api.meta.ai/v1"
+		}
+		e.Headers = NormalizeHeaders(e.Headers)
+		e.ExcludedModels = NormalizeExcludedModels(e.ExcludedModels)
+		e.AlphaSearch = false
+		out = append(out, e)
+	}
+	return out
+}
+
 func sanitizeCodexKeyEntries(entries []CodexKey) []CodexKey {
 	if len(entries) == 0 {
 		return entries
@@ -404,4 +437,52 @@ func (cfg *Config) SanitizeModelContextOverrides() {
 
 	// Keep a non-nil empty slice so an emptied list still serializes to disk.
 	cfg.ModelContextOverrides = out
+}
+
+// SanitizeOAuthRequestScopedErrors normalizes and validates global OAuth request-scoped error rules.
+// It trims whitespace, normalizes channel keys to lower-case, validates status/action, and drops invalid rules.
+func (cfg *Config) SanitizeOAuthRequestScopedErrors() {
+	if cfg == nil || len(cfg.OAuthRequestScopedErrors) == 0 {
+		return
+	}
+	out := make(map[string][]RequestScopedErrorRule, len(cfg.OAuthRequestScopedErrors))
+	for rawChannel, rules := range cfg.OAuthRequestScopedErrors {
+		channel := strings.ToLower(strings.TrimSpace(rawChannel))
+		if channel == "" || len(rules) == 0 {
+			continue
+		}
+		clean := make([]RequestScopedErrorRule, 0, len(rules))
+		for _, r := range rules {
+			action := strings.ToLower(strings.TrimSpace(r.Action))
+			match := make([]string, 0, len(r.Match))
+			for _, m := range r.Match {
+				if tm := strings.TrimSpace(m); tm != "" {
+					match = append(match, tm)
+				}
+			}
+			matchRegexr := make([]string, 0, len(r.MatchRegexr))
+			for _, re := range r.MatchRegexr {
+				if tre := strings.TrimSpace(re); tre != "" {
+					matchRegexr = append(matchRegexr, tre)
+				}
+			}
+			if r.Status <= 0 || (len(match) == 0 && len(matchRegexr) == 0) || action == "" {
+				continue
+			}
+			clean = append(clean, RequestScopedErrorRule{
+				Status:      r.Status,
+				Match:       match,
+				MatchRegexr: matchRegexr,
+				Action:      action,
+			})
+		}
+		if len(clean) > 0 {
+			out[channel] = clean
+		}
+	}
+	if len(out) == 0 {
+		cfg.OAuthRequestScopedErrors = nil
+		return
+	}
+	cfg.OAuthRequestScopedErrors = out
 }

@@ -211,6 +211,8 @@ func baselineExecutorAuths() []*coreauth.Auth {
 		"xai",
 		"qodercn",
 		"qoder",
+		"devin",
+		"meta",
 		"openai-compatibility",
 		constant.CommandCode,
 	}
@@ -312,6 +314,10 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		s.coreManager.RegisterExecutor(executor.NewQoderExecutor(cfg))
 	case constant.CommandCode:
 		s.coreManager.RegisterExecutor(executor.NewCommandCodeExecutor(cfg))
+	case "devin":
+		s.coreManager.RegisterExecutor(executor.NewDevinExecutor(cfg))
+	case "meta":
+		s.coreManager.RegisterExecutor(executor.NewMetaExecutor(cfg))
 	default:
 		providerKey := strings.ToLower(strings.TrimSpace(a.Provider))
 		if providerKey == "" {

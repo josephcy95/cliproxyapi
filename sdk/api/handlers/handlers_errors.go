@@ -55,7 +55,18 @@ func enrichAuthSelectionError(err error, providers []string, model string) error
 	if baseMessage == "" {
 		baseMessage = "no auth available"
 	}
-	detail := fmt.Sprintf("%s (providers=%s, model=%s)", baseMessage, providerText, modelText)
+
+	cause := errors.Unwrap(err)
+	var upstreamSummary string
+	if cause != nil {
+		upstreamSummary = coreauth.ExtractUpstreamErrorSummary(cause.Error())
+	}
+	var detail string
+	if upstreamSummary != "" && !strings.Contains(baseMessage, upstreamSummary) {
+		detail = fmt.Sprintf("%s (providers=%s, model=%s; last upstream error: %s)", baseMessage, providerText, modelText, upstreamSummary)
+	} else {
+		detail = fmt.Sprintf("%s (providers=%s, model=%s)", baseMessage, providerText, modelText)
+	}
 
 	// Clarify the most common alias confusion between Anthropic route names and internal provider keys.
 	if strings.Contains(","+providerText+",", ",claude,") {
@@ -67,12 +78,23 @@ func enrichAuthSelectionError(err error, providers []string, model string) error
 		status = http.StatusServiceUnavailable
 	}
 
-	return &coreauth.Error{
+	enriched := &coreauth.Error{
 		Code:       authErr.Code,
 		Message:    detail,
 		Retryable:  authErr.Retryable,
 		HTTPStatus: status,
 	}
+	var carrier interface{ WithAuthError(*coreauth.Error) error }
+	if errors.As(err, &carrier) && carrier != nil {
+		return carrier.WithAuthError(enriched)
+	}
+	if coreauth.IsTerminalAuthError(err) {
+		return coreauth.NewTerminalAuthError(enriched, cause)
+	}
+	if cause != nil {
+		return coreauth.WithCause(enriched, cause)
+	}
+	return enriched
 }
 
 // WriteErrorResponse writes an error message to the response writer using the HTTP status embedded in the message.

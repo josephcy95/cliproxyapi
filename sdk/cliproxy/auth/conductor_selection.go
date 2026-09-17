@@ -392,6 +392,7 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 	preferredByPriority := make(map[int][]*Auth)
 	hasFreeCodex := false
 	cooldownCount := 0
+	unauthorizedCount := 0
 	var earliest time.Time
 	for _, candidate := range auths {
 		checkModel := m.selectionModelForAuth(candidate, routeModel)
@@ -413,6 +414,12 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 				earliest = next
 			}
 		}
+		if reason != blockReasonDisabled && next.After(now) && (earliest.IsZero() || next.Before(earliest)) {
+			earliest = next
+		}
+		if hasUnauthorizedAuthFailure(candidate) {
+			unauthorizedCount++
+		}
 	}
 
 	if len(availableByPriority) == 0 {
@@ -427,13 +434,126 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 			}
 			return nil, newModelCooldownError(routeModel, providerForError, resetIn)
 		}
-		return nil, &Error{Code: "auth_unavailable", Message: "no auth available"}
+		lastCandidateErr := latestCandidateErrorForModel(auths, func(candidate *Auth) string {
+			return m.selectionModelForAuth(candidate, routeModel)
+		})
+		if unauthorizedCount == len(auths) && len(auths) > 0 {
+			terminalCause := latestUnauthorizedCandidateError(auths)
+			if terminalCause == nil {
+				terminalCause = lastCandidateErr
+			}
+			return nil, NewTerminalAuthError(&Error{
+				Code:       "auth_unavailable",
+				Message:    "no auth available",
+				Retryable:  false,
+				HTTPStatus: http.StatusServiceUnavailable,
+			}, terminalCause)
+		}
+		return nil, newAuthUnavailableErrorWithCause(earliest, now, lastCandidateErr)
 	}
 	if preferFreeCodex && hasFreeCodex {
 		availableByPriority = preferredByPriority
 	}
 
 	return availableAuthsFromPriorityBuckets(availableByPriority, allPriorities), nil
+}
+
+func latestUnauthorizedCandidateError(auths []*Auth) error {
+	var latestTime time.Time
+	var latestAuthID string
+	var latestErr error
+
+	for _, candidate := range auths {
+		if candidate == nil || !hasUnauthorizedAuthFailure(candidate) {
+			continue
+		}
+		curTime := candidate.UpdatedAt
+		if candidate.LastError != nil {
+			if latestErr == nil || curTime.After(latestTime) || (curTime.Equal(latestTime) && candidate.ID > latestAuthID) {
+				latestTime = curTime
+				latestAuthID = candidate.ID
+				latestErr = candidate.LastError
+			}
+		}
+	}
+	return latestErr
+}
+
+func latestCandidateErrorForModel(auths []*Auth, selectionModelFunc func(*Auth) string) error {
+	var latestModelTime time.Time
+	var latestModelAuthID string
+	var latestModelErr error
+
+	var latestAuthTime time.Time
+	var latestAuthID string
+	var latestAuthErr error
+
+	for _, candidate := range auths {
+		if candidate == nil {
+			continue
+		}
+		checkModel := candidate.ID
+		if selectionModelFunc != nil {
+			checkModel = selectionModelFunc(candidate)
+		}
+		var modelErr error
+		var modelTime time.Time
+		if len(candidate.ModelStates) > 0 {
+			if state, ok := candidate.ModelStates[checkModel]; ok && state != nil {
+				if state.LastError != nil {
+					modelErr = state.LastError
+					modelTime = state.UpdatedAt
+				} else if strings.TrimSpace(state.StatusMessage) != "" {
+					modelErr = errors.New(state.StatusMessage)
+					modelTime = state.UpdatedAt
+				}
+			} else if state, ok := candidate.ModelStates[canonicalModelKey(checkModel)]; ok && state != nil {
+				if state.LastError != nil {
+					modelErr = state.LastError
+					modelTime = state.UpdatedAt
+				} else if strings.TrimSpace(state.StatusMessage) != "" {
+					modelErr = errors.New(state.StatusMessage)
+					modelTime = state.UpdatedAt
+				}
+			}
+		}
+
+		if modelErr != nil {
+			if modelTime.IsZero() {
+				modelTime = candidate.UpdatedAt
+			}
+			if latestModelErr == nil || modelTime.After(latestModelTime) || (modelTime.Equal(latestModelTime) && candidate.ID > latestModelAuthID) {
+				latestModelTime = modelTime
+				latestModelAuthID = candidate.ID
+				latestModelErr = modelErr
+			}
+		}
+
+		var authErr error
+		var authTime time.Time
+		if candidate.LastError != nil {
+			authErr = candidate.LastError
+			authTime = candidate.UpdatedAt
+		} else if strings.TrimSpace(candidate.StatusMessage) != "" {
+			authErr = errors.New(candidate.StatusMessage)
+			authTime = candidate.UpdatedAt
+		}
+		if authErr != nil {
+			if authTime.IsZero() {
+				authTime = candidate.UpdatedAt
+			}
+			if latestAuthErr == nil || authTime.After(latestAuthTime) || (authTime.Equal(latestAuthTime) && candidate.ID > latestAuthID) {
+				latestAuthTime = authTime
+				latestAuthID = candidate.ID
+				latestAuthErr = authErr
+			}
+		}
+	}
+
+	if latestModelErr != nil {
+		return latestModelErr
+	}
+	return latestAuthErr
 }
 
 // availableAuthsForSelector reports the candidates handed to priority-scoped consumers such as
@@ -905,9 +1025,6 @@ func (m *Manager) shouldRetryAfterError(err error, attempt int, providers []stri
 	if errors.As(err, &homeBusy) && homeBusy != nil {
 		return 0, false
 	}
-	if maxWait <= 0 {
-		return 0, false
-	}
 	status := statusCodeFromError(err)
 	if status == http.StatusOK {
 		return 0, false
@@ -915,24 +1032,45 @@ func (m *Manager) shouldRetryAfterError(err error, attempt int, providers []stri
 	if isRequestInvalidError(err) || isRequestStopError(err) {
 		return 0, false
 	}
+	if !isRequestRetryRoundError(err) || !m.retryAllowed(attempt, providers) {
+		return 0, false
+	}
 	wait, found := m.closestCooldownWait(providers, model, attempt)
 	if found {
-		if wait > maxWait {
+		if wait > 0 && (maxWait <= 0 || wait > maxWait) {
 			return 0, false
 		}
 		return wait, true
 	}
-	if status != http.StatusTooManyRequests {
-		return 0, false
+	if retryAfter := retryAfterFromError(err); retryAfter != nil {
+		if *retryAfter < 0 || (*retryAfter > 0 && (maxWait <= 0 || *retryAfter > maxWait)) {
+			return 0, false
+		}
+		return *retryAfter, true
 	}
-	if !m.retryAllowed(attempt, providers) {
-		return 0, false
+	return 0, true
+}
+
+func isRequestRetryRoundError(err error) bool {
+	if err == nil {
+		return false
 	}
-	retryAfter := retryAfterFromError(err)
-	if retryAfter == nil || *retryAfter <= 0 || *retryAfter > maxWait {
-		return 0, false
+	return isCredentialRetryRoundStatus(statusCodeFromError(err)) || isTransientTransportError(err)
+}
+
+func isCredentialRetryRoundStatus(status int) bool {
+	switch status {
+	case http.StatusForbidden,
+		http.StatusRequestTimeout,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
 	}
-	return *retryAfter, true
 }
 
 // cooldownWaitJitterCap bounds the random jitter added to cooldown waits so a

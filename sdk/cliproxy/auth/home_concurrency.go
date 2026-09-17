@@ -270,10 +270,18 @@ func verifyAccountedHomeConcurrencyIdentity(tuple homeConcurrencyTuple, auth *Au
 // SafeResponseHeaders returns trusted response headers only for CPA's concrete Home busy error.
 func SafeResponseHeaders(err error) http.Header {
 	var busy *HomeConcurrencyBusyError
-	if !errors.As(err, &busy) || busy == nil {
-		return nil
+	if errors.As(err, &busy) && busy != nil {
+		return busy.SafeResponseHeaders()
 	}
-	return busy.SafeResponseHeaders()
+	var modelCooldown *modelCooldownError
+	if errors.As(err, &modelCooldown) && modelCooldown != nil {
+		return modelCooldown.Headers()
+	}
+	var unavailable *authUnavailableError
+	if errors.As(err, &unavailable) && unavailable != nil {
+		return unavailable.Headers()
+	}
+	return nil
 }
 
 func safeRetryAfterHeader(retryAfter time.Duration) http.Header {

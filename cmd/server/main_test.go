@@ -6,6 +6,31 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+func TestArgvEnablesBoolFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		flag string
+		want bool
+	}{
+		{name: "bare long flag", args: []string{"--discover-json"}, flag: "discover-json", want: true},
+		{name: "assigned true", args: []string{"--discover-json=true"}, flag: "discover-json", want: true},
+		{name: "assigned false", args: []string{"--discover-json=false"}, flag: "discover-json", want: false},
+		{name: "does not match timeout", args: []string{"--discover-timeout", "3"}, flag: "discover", want: false},
+		{name: "bare discover", args: []string{"--discover"}, flag: "discover", want: true},
+		{name: "stops at terminator", args: []string{"--", "--discover-json"}, flag: "discover-json", want: false},
+		{name: "stops at non-flag", args: []string{"foo", "--discover-json"}, flag: "discover-json", want: false},
+		{name: "skips config value", args: []string{"--config", "config.yaml", "--discover-json"}, flag: "discover-json", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := argvEnablesBoolFlag(tt.args, tt.flag); got != tt.want {
+				t.Fatalf("argvEnablesBoolFlag(%v, %q) = %t, want %t", tt.args, tt.flag, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestShouldEnableExampleAPIKeySafeMode(t *testing.T) {
 	cfgWithExampleKey := &config.Config{
 		SDKConfig: config.SDKConfig{
@@ -96,6 +121,7 @@ func TestModelCatalogUpdaterPlan(t *testing.T) {
 		wantModels          bool
 		wantCodexClient     bool
 		wantCatalogFallback bool
+		wantDevin           bool
 	}{
 		{
 			name:                "normal CPA refreshes all catalogs",
@@ -104,6 +130,7 @@ func TestModelCatalogUpdaterPlan(t *testing.T) {
 			wantModels:          true,
 			wantCodexClient:     true,
 			wantCatalogFallback: true,
+			wantDevin:           true,
 		},
 		{
 			name:                "home mode keeps models.json local and refreshes edge-local metadata",
@@ -112,6 +139,7 @@ func TestModelCatalogUpdaterPlan(t *testing.T) {
 			wantModels:          false,
 			wantCodexClient:     true,
 			wantCatalogFallback: true,
+			wantDevin:           true,
 		},
 		{
 			name:                "local-model disables every remote catalog",
@@ -120,6 +148,7 @@ func TestModelCatalogUpdaterPlan(t *testing.T) {
 			wantModels:          false,
 			wantCodexClient:     false,
 			wantCatalogFallback: false,
+			wantDevin:           false,
 		},
 		{
 			name:                "local-model disables every remote catalog even under home",
@@ -128,15 +157,61 @@ func TestModelCatalogUpdaterPlan(t *testing.T) {
 			wantModels:          false,
 			wantCodexClient:     false,
 			wantCatalogFallback: false,
+			wantDevin:           false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotModels, gotCodex, gotCatalogFallback := modelCatalogUpdaterPlan(tt.localModel, tt.homeEnabled)
-			if gotModels != tt.wantModels || gotCodex != tt.wantCodexClient || gotCatalogFallback != tt.wantCatalogFallback {
-				t.Fatalf("modelCatalogUpdaterPlan(%v, %v) = (%v, %v, %v), want (%v, %v, %v)",
-					tt.localModel, tt.homeEnabled, gotModels, gotCodex, gotCatalogFallback,
-					tt.wantModels, tt.wantCodexClient, tt.wantCatalogFallback)
+			gotModels, gotCodex, gotCatalogFallback, gotDevin := modelCatalogUpdaterPlan(tt.localModel, tt.homeEnabled)
+			if gotModels != tt.wantModels || gotCodex != tt.wantCodexClient || gotCatalogFallback != tt.wantCatalogFallback || gotDevin != tt.wantDevin {
+				t.Fatalf("modelCatalogUpdaterPlan(%v, %v) = (%v, %v, %v, %v), want (%v, %v, %v, %v)",
+					tt.localModel, tt.homeEnabled, gotModels, gotCodex, gotCatalogFallback, gotDevin,
+					tt.wantModels, tt.wantCodexClient, tt.wantCatalogFallback, tt.wantDevin)
+			}
+		})
+	}
+}
+
+func TestHomeConfigPayloadPortApplication(t *testing.T) {
+	tests := []struct {
+		name     string
+		yamlBody string
+		wantPort int
+	}{
+		{
+			name:     "custom port honored",
+			yamlBody: "port: 9090\n",
+			wantPort: 9090,
+		},
+		{
+			name:     "custom port 8327 honored",
+			yamlBody: "port: 8327\n",
+			wantPort: 8327,
+		},
+		{
+			name:     "missing port defaults to 8317",
+			yamlBody: "debug: true\n",
+			wantPort: 8317,
+		},
+		{
+			name:     "standard port 8317 preserved",
+			yamlBody: "port: 8317\n",
+			wantPort: 8317,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, errParse := config.ParseConfigBytes([]byte(tt.yamlBody))
+			if errParse != nil {
+				t.Fatalf("ParseConfigBytes() error = %v", errParse)
+			}
+			if parsed == nil {
+				parsed = &config.Config{}
+			}
+			parsed.Port = config.NormalizeHomePort(parsed.Port)
+			if parsed.Port != tt.wantPort {
+				t.Fatalf("parsed.Port = %d, want %d", parsed.Port, tt.wantPort)
 			}
 		})
 	}

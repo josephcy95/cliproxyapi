@@ -97,6 +97,9 @@ func TestCommandCodeConfigModelsAreRegistered(t *testing.T) {
 	service.coreManager = coreauth.NewManager(nil, nil, nil)
 
 	auth := synthesizeCommandCodeConfigAuth(t, service.cfg)
+	if _, errRegister := service.coreManager.Register(t.Context(), auth); errRegister != nil {
+		t.Fatalf("Register commandcode auth: %v", errRegister)
+	}
 	t.Cleanup(func() { GlobalModelRegistry().UnregisterClient(auth.ID) })
 	service.completeModelRegistrationForAuth(t.Context(), auth)
 

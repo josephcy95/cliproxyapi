@@ -1281,7 +1281,105 @@ func (h *Handler) DeleteOAuthModelAlias(c *gin.Context) {
 	h.persist(c)
 }
 
+// oauth-request-scoped-errors: map[string][]RequestScopedErrorRule
+func (h *Handler) GetOAuthRequestScopedErrors(c *gin.Context) {
+	c.JSON(200, gin.H{"oauth-request-scoped-errors": sanitizedOAuthRequestScopedErrors(h.cfg.OAuthRequestScopedErrors)})
+}
+
+func (h *Handler) PutOAuthRequestScopedErrors(c *gin.Context) {
+	data, err := c.GetRawData()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "failed to read body"})
+		return
+	}
+	var entries map[string][]config.RequestScopedErrorRule
+	if err = json.Unmarshal(data, &entries); err != nil {
+		var wrapper struct {
+			Items map[string][]config.RequestScopedErrorRule `json:"items"`
+		}
+		if err2 := json.Unmarshal(data, &wrapper); err2 != nil {
+			c.JSON(400, gin.H{"error": "invalid body"})
+			return
+		}
+		entries = wrapper.Items
+	}
+	h.cfg.OAuthRequestScopedErrors = sanitizedOAuthRequestScopedErrors(entries)
+	h.persist(c)
+}
+
+func (h *Handler) PatchOAuthRequestScopedErrors(c *gin.Context) {
+	var body struct {
+		Provider *string                         `json:"provider"`
+		Channel  *string                         `json:"channel"`
+		Rules    []config.RequestScopedErrorRule `json:"rules"`
+	}
+	if errBindJSON := c.ShouldBindJSON(&body); errBindJSON != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+	channelRaw := ""
+	if body.Channel != nil {
+		channelRaw = *body.Channel
+	} else if body.Provider != nil {
+		channelRaw = *body.Provider
+	}
+	channel := strings.ToLower(strings.TrimSpace(channelRaw))
+	if channel == "" {
+		c.JSON(400, gin.H{"error": "invalid channel"})
+		return
+	}
+
+	normalizedMap := sanitizedOAuthRequestScopedErrors(map[string][]config.RequestScopedErrorRule{channel: body.Rules})
+	normalized := normalizedMap[channel]
+	if len(normalized) == 0 {
+		if h.cfg.OAuthRequestScopedErrors == nil {
+			c.JSON(404, gin.H{"error": "channel not found"})
+			return
+		}
+		if _, ok := h.cfg.OAuthRequestScopedErrors[channel]; !ok {
+			c.JSON(404, gin.H{"error": "channel not found"})
+			return
+		}
+		delete(h.cfg.OAuthRequestScopedErrors, channel)
+		if len(h.cfg.OAuthRequestScopedErrors) == 0 {
+			h.cfg.OAuthRequestScopedErrors = nil
+		}
+		h.persist(c)
+		return
+	}
+	if h.cfg.OAuthRequestScopedErrors == nil {
+		h.cfg.OAuthRequestScopedErrors = make(map[string][]config.RequestScopedErrorRule)
+	}
+	h.cfg.OAuthRequestScopedErrors[channel] = normalized
+	h.persist(c)
+}
+
+func (h *Handler) DeleteOAuthRequestScopedErrors(c *gin.Context) {
+	channel := strings.ToLower(strings.TrimSpace(c.Query("channel")))
+	if channel == "" {
+		channel = strings.ToLower(strings.TrimSpace(c.Query("provider")))
+	}
+	if channel == "" {
+		c.JSON(400, gin.H{"error": "missing channel"})
+		return
+	}
+	if h.cfg.OAuthRequestScopedErrors == nil {
+		c.JSON(404, gin.H{"error": "channel not found"})
+		return
+	}
+	if _, ok := h.cfg.OAuthRequestScopedErrors[channel]; !ok {
+		c.JSON(404, gin.H{"error": "channel not found"})
+		return
+	}
+	delete(h.cfg.OAuthRequestScopedErrors, channel)
+	if len(h.cfg.OAuthRequestScopedErrors) == 0 {
+		h.cfg.OAuthRequestScopedErrors = nil
+	}
+	h.persist(c)
+}
+
 // codex-api-key: []CodexKey
+
 func (h *Handler) GetCodexKeys(c *gin.Context) {
 	c.JSON(200, gin.H{"codex-api-key": h.codexKeysWithAuthIndex()})
 }
@@ -1912,6 +2010,197 @@ func normalizeCommandCodeKey(entry *config.CommandCodeKey) {
 	entry.Models = normalized
 }
 
+// meta-api-key: []MetaKey
+func (h *Handler) GetMetaKeys(c *gin.Context) {
+	c.JSON(200, gin.H{"meta-api-key": h.metaKeysWithAuthIndex()})
+}
+
+func (h *Handler) PutMetaKeys(c *gin.Context) {
+	data, errRead := c.GetRawData()
+	if errRead != nil {
+		c.JSON(400, gin.H{"error": "failed to read body"})
+		return
+	}
+	var arr []config.MetaKey
+	if errUnmarshal := json.Unmarshal(data, &arr); errUnmarshal != nil {
+		var obj struct {
+			Items []config.MetaKey `json:"items"`
+		}
+		if errObject := json.Unmarshal(data, &obj); errObject != nil || len(obj.Items) == 0 {
+			c.JSON(400, gin.H{"error": "invalid body"})
+			return
+		}
+		arr = obj.Items
+	}
+	filtered := make([]config.MetaKey, 0, len(arr))
+	for i := range arr {
+		entry := arr[i]
+		normalizeCodexKey(&entry)
+		if entry.BaseURL == "" {
+			entry.BaseURL = "https://api.meta.ai/v1"
+		}
+		if rejectInvalidCredentialWeight(c, fmt.Sprintf("meta-api-key[%d].weight", i), entry.Weight) {
+			return
+		}
+		filtered = append(filtered, entry)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cfg.MetaKey = filtered
+	h.cfg.SanitizeMetaKeys()
+	h.persistLocked(c)
+}
+
+func (h *Handler) PatchMetaKey(c *gin.Context) {
+	type metaKeyPatch struct {
+		APIKey              *string                          `json:"api-key"`
+		Priority            *int                             `json:"priority"`
+		Weight              json.RawMessage                  `json:"weight"`
+		Prefix              *string                          `json:"prefix"`
+		BaseURL             *string                          `json:"base-url"`
+		ProxyURL            *string                          `json:"proxy-url"`
+		Models              *[]config.CodexModel             `json:"models"`
+		Headers             *map[string]string               `json:"headers"`
+		ExcludedModels      *[]string                        `json:"excluded-models"`
+		DisableCooling      json.RawMessage                  `json:"disable-cooling"`
+		RequestRetry        *int                             `json:"request-retry"`
+		RequestScopedErrors *[]config.RequestScopedErrorRule `json:"request-scoped-errors"`
+	}
+	var body struct {
+		Index *int          `json:"index"`
+		Match *string       `json:"match"`
+		Value *metaKeyPatch `json:"value"`
+	}
+	if errBind := c.ShouldBindJSON(&body); errBind != nil || body.Value == nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	targetIndex := -1
+	if body.Index != nil && *body.Index >= 0 && *body.Index < len(h.cfg.MetaKey) {
+		targetIndex = *body.Index
+	}
+	if targetIndex == -1 && body.Match != nil {
+		match := strings.TrimSpace(*body.Match)
+		for i := range h.cfg.MetaKey {
+			if h.cfg.MetaKey[i].APIKey == match {
+				targetIndex = i
+				break
+			}
+		}
+	}
+	if targetIndex == -1 {
+		c.JSON(404, gin.H{"error": "item not found"})
+		return
+	}
+
+	entry := h.cfg.MetaKey[targetIndex]
+	if body.Value.APIKey != nil {
+		entry.APIKey = strings.TrimSpace(*body.Value.APIKey)
+	}
+	if body.Value.Priority != nil {
+		entry.Priority = *body.Value.Priority
+	}
+	if len(body.Value.Weight) > 0 {
+		weight, errWeight := parseCredentialWeightPatch(body.Value.Weight)
+		if errWeight != nil {
+			c.JSON(400, gin.H{"error": errWeight.Error()})
+			return
+		}
+		entry.Weight = weight
+	}
+	if body.Value.Prefix != nil {
+		entry.Prefix = strings.TrimSpace(*body.Value.Prefix)
+	}
+	if body.Value.BaseURL != nil {
+		trimmed := strings.TrimSpace(*body.Value.BaseURL)
+		if trimmed == "" {
+			trimmed = "https://api.meta.ai/v1"
+		}
+		entry.BaseURL = trimmed
+	}
+	if body.Value.ProxyURL != nil {
+		entry.ProxyURL = strings.TrimSpace(*body.Value.ProxyURL)
+	}
+	if body.Value.Models != nil {
+		entry.Models = append([]config.CodexModel(nil), (*body.Value.Models)...)
+	}
+	if body.Value.Headers != nil {
+		entry.Headers = config.NormalizeHeaders(*body.Value.Headers)
+	}
+	if body.Value.ExcludedModels != nil {
+		entry.ExcludedModels = config.NormalizeExcludedModels(*body.Value.ExcludedModels)
+	}
+	if !applyDisableCoolingPatch(c, body.Value.DisableCooling, &entry.DisableCooling) {
+		return
+	}
+	if body.Value.RequestRetry != nil {
+		entry.RequestRetry = body.Value.RequestRetry
+	}
+	if body.Value.RequestScopedErrors != nil {
+		entry.RequestScopedErrors = append([]config.RequestScopedErrorRule(nil), *body.Value.RequestScopedErrors...)
+	}
+	normalizeCodexKey(&entry)
+	h.cfg.MetaKey[targetIndex] = entry
+	h.cfg.SanitizeMetaKeys()
+	h.persistLocked(c)
+}
+
+func (h *Handler) DeleteMetaKey(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if val := strings.TrimSpace(c.Query("api-key")); val != "" {
+		if baseRaw, okBase := c.GetQuery("base-url"); okBase {
+			base := strings.TrimSpace(baseRaw)
+			out := make([]config.MetaKey, 0, len(h.cfg.MetaKey))
+			for _, entry := range h.cfg.MetaKey {
+				if strings.TrimSpace(entry.APIKey) == val && strings.TrimSpace(entry.BaseURL) == base {
+					continue
+				}
+				out = append(out, entry)
+			}
+			h.cfg.MetaKey = out
+			h.cfg.SanitizeMetaKeys()
+			h.persistLocked(c)
+			return
+		}
+
+		matchIndex := -1
+		matchCount := 0
+		for i := range h.cfg.MetaKey {
+			if strings.TrimSpace(h.cfg.MetaKey[i].APIKey) == val {
+				matchCount++
+				if matchIndex == -1 {
+					matchIndex = i
+				}
+			}
+		}
+		if matchCount > 1 {
+			c.JSON(400, gin.H{"error": "multiple items match api-key; base-url is required"})
+			return
+		}
+		if matchIndex != -1 {
+			h.cfg.MetaKey = append(h.cfg.MetaKey[:matchIndex], h.cfg.MetaKey[matchIndex+1:]...)
+		}
+		h.cfg.SanitizeMetaKeys()
+		h.persistLocked(c)
+		return
+	}
+	if idxStr := c.Query("index"); idxStr != "" {
+		var idx int
+		_, errScan := fmt.Sscanf(idxStr, "%d", &idx)
+		if errScan == nil && idx >= 0 && idx < len(h.cfg.MetaKey) {
+			h.cfg.MetaKey = append(h.cfg.MetaKey[:idx], h.cfg.MetaKey[idx+1:]...)
+			h.cfg.SanitizeMetaKeys()
+			h.persistLocked(c)
+			return
+		}
+	}
+	c.JSON(400, gin.H{"error": "missing api-key or index"})
+}
+
 func applyDisableCoolingPatch(c *gin.Context, raw json.RawMessage, target **bool) bool {
 	if len(raw) == 0 {
 		return true
@@ -2067,4 +2356,26 @@ func sanitizedOAuthModelAlias(entries map[string][]config.OAuthModelAlias) map[s
 		return nil
 	}
 	return cfg.OAuthModelAlias
+}
+
+func sanitizedOAuthRequestScopedErrors(entries map[string][]config.RequestScopedErrorRule) map[string][]config.RequestScopedErrorRule {
+	if len(entries) == 0 {
+		return nil
+	}
+	copied := make(map[string][]config.RequestScopedErrorRule, len(entries))
+	for channel, rules := range entries {
+		if len(rules) == 0 {
+			continue
+		}
+		copied[channel] = append([]config.RequestScopedErrorRule(nil), rules...)
+	}
+	if len(copied) == 0 {
+		return nil
+	}
+	cfg := config.Config{OAuthRequestScopedErrors: copied}
+	cfg.SanitizeOAuthRequestScopedErrors()
+	if len(cfg.OAuthRequestScopedErrors) == 0 {
+		return nil
+	}
+	return cfg.OAuthRequestScopedErrors
 }

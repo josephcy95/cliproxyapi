@@ -99,6 +99,12 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	if errValidate := cfg.CredentialInFlight.Validate(); errValidate != nil {
 		return nil, errValidate
 	}
+	if cfg.Discovery.ServiceType == "" {
+		cfg.Discovery.ServiceType = DefaultDiscoveryServiceType
+	}
+	if len(cfg.Discovery.Subtypes) == 0 {
+		cfg.Discovery.Subtypes = []string{"_chat-completions", "_responses", "_messages", "_generate-content", "_interactions"}
+	}
 	if errValidate := cfg.Codex.LiveMediaRelay.Validate(); errValidate != nil {
 		return nil, errValidate
 	}
@@ -174,6 +180,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// the public API host.
 	cfg.SanitizeCommandCodeKeys()
 
+	// Sanitize Meta keys.
+	cfg.SanitizeMetaKeys()
+
 	// Sanitize Codex header defaults.
 	cfg.SanitizeCodexHeaderDefaults()
 
@@ -191,6 +200,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Normalize global OAuth model name aliases.
 	cfg.SanitizeOAuthModelAlias()
+	cfg.SanitizeOAuthRequestScopedErrors()
 
 	// Normalize manual model context window overrides.
 	cfg.SanitizeModelContextOverrides()

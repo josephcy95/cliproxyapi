@@ -40,6 +40,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/plugins/:id/config", s.mgmt.GetPluginConfig)
 		mgmt.PUT("/plugins/:id/config", s.mgmt.PutPluginConfig)
 		mgmt.PATCH("/plugins/:id/config", s.mgmt.PatchPluginConfig)
+		mgmt.GET("/plugins/:id/quota", s.mgmt.GetPluginQuota)
+		mgmt.POST("/plugins/:id/quota", s.mgmt.FetchPluginQuota)
+		mgmt.DELETE("/plugins/:id/quota", s.mgmt.ResetPluginQuota)
+		mgmt.POST("/plugins/:id/quota/reset", s.mgmt.ResetPluginQuota)
 
 		mgmt.GET("/debug", s.mgmt.GetDebug)
 		mgmt.PUT("/debug", s.mgmt.PutDebug)
@@ -82,6 +86,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.POST("/reset-quota", s.mgmt.ResetQuota)
 		mgmt.POST("/codex-quota-recovery/begin", s.mgmt.BeginCodexQuotaRecovery)
 		mgmt.POST("/codex-quota-recovery", s.mgmt.RecoverCodexQuota)
+
+		mgmt.GET("/quota/providers", s.mgmt.GetQuotaProviders)
+		mgmt.POST("/quota/fetch", s.mgmt.FetchCredentialQuota)
+		mgmt.POST("/quota/reset", s.mgmt.ResetCredentialQuota)
 
 		mgmt.GET("/api-keys", s.mgmt.GetAPIKeys)
 		mgmt.PUT("/api-keys", s.mgmt.PutAPIKeys)
@@ -189,6 +197,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/commandcode-api-key", s.mgmt.PutCommandCodeKeys)
 		mgmt.PATCH("/commandcode-api-key", s.mgmt.PatchCommandCodeKey)
 		mgmt.DELETE("/commandcode-api-key", s.mgmt.DeleteCommandCodeKey)
+		mgmt.GET("/meta-api-key", s.mgmt.GetMetaKeys)
+		mgmt.PUT("/meta-api-key", s.mgmt.PutMetaKeys)
+		mgmt.PATCH("/meta-api-key", s.mgmt.PatchMetaKey)
+		mgmt.DELETE("/meta-api-key", s.mgmt.DeleteMetaKey)
 
 		mgmt.GET("/openai-compatibility", s.mgmt.GetOpenAICompat)
 		mgmt.PUT("/openai-compatibility", s.mgmt.PutOpenAICompat)
@@ -209,6 +221,11 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/oauth-model-alias", s.mgmt.PutOAuthModelAlias)
 		mgmt.PATCH("/oauth-model-alias", s.mgmt.PatchOAuthModelAlias)
 		mgmt.DELETE("/oauth-model-alias", s.mgmt.DeleteOAuthModelAlias)
+
+		mgmt.GET("/oauth-request-scoped-errors", s.mgmt.GetOAuthRequestScopedErrors)
+		mgmt.PUT("/oauth-request-scoped-errors", s.mgmt.PutOAuthRequestScopedErrors)
+		mgmt.PATCH("/oauth-request-scoped-errors", s.mgmt.PatchOAuthRequestScopedErrors)
+		mgmt.DELETE("/oauth-request-scoped-errors", s.mgmt.DeleteOAuthRequestScopedErrors)
 
 		mgmt.GET("/auth-files", s.mgmt.ListAuthFiles)
 		mgmt.GET("/auth-files/models", s.mgmt.GetAuthFileModels)
@@ -234,6 +251,8 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/xai-auth-url", s.mgmt.RequestXAIToken)
 		mgmt.GET("/qodercn-auth-url", s.mgmt.RequestQoderCNToken)
 		mgmt.GET("/qoder-auth-url", s.mgmt.RequestQoderToken)
+		mgmt.GET("/devin-auth-url", s.mgmt.RequestDevinToken)
+		mgmt.GET("/meta-auth-url", s.mgmt.RequestMetaToken)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 		mgmt.DELETE("/oauth-session", s.mgmt.CancelAuthSession)
 	}
