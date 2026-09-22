@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -629,6 +630,94 @@ func (a *Auth) ExpirationTime() (time.Time, bool) {
 	}
 	if ts, ok := expirationFromMap(a.Metadata); ok {
 		return ts, true
+	}
+	return time.Time{}, false
+}
+
+// AccessTokenExpirationTime returns the expiration time of the specific access_token.
+func (a *Auth) AccessTokenExpirationTime() (time.Time, bool) {
+	if a == nil {
+		return time.Time{}, false
+	}
+	tokenStr := authAccessToken(a)
+	if tokenStr == "" {
+		return time.Time{}, false
+	}
+	if jwtExp, ok := parseJWTExp(tokenStr); ok {
+		return jwtExp, true
+	}
+	return a.ExpirationTime()
+}
+
+// HasValidAccessToken reports whether the auth has a non-empty access token that is unexpired.
+func (a *Auth) HasValidAccessToken(now time.Time) bool {
+	if a == nil {
+		return false
+	}
+	tokenStr := authAccessToken(a)
+	if tokenStr == "" {
+		return false
+	}
+	if exp, ok := a.AccessTokenExpirationTime(); ok {
+		return exp.After(now)
+	}
+	return true
+}
+
+func parseJWTExp(token string) (time.Time, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return time.Time{}, false
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	payloadSegment := parts[1]
+	var (
+		payloadBytes []byte
+		errDecode    error
+	)
+	switch len(payloadSegment) % 4 {
+	case 2:
+		payloadBytes, errDecode = base64.URLEncoding.DecodeString(payloadSegment + "==")
+	case 3:
+		payloadBytes, errDecode = base64.URLEncoding.DecodeString(payloadSegment + "=")
+	default:
+		payloadBytes, errDecode = base64.URLEncoding.DecodeString(payloadSegment)
+	}
+	if errDecode != nil {
+		payloadBytes, errDecode = base64.RawURLEncoding.DecodeString(payloadSegment)
+		if errDecode != nil {
+			return time.Time{}, false
+		}
+	}
+	var claims struct {
+		Exp any `json:"exp"`
+	}
+	if errJSON := json.Unmarshal(payloadBytes, &claims); errJSON != nil {
+		return time.Time{}, false
+	}
+	if claims.Exp == nil {
+		return time.Time{}, false
+	}
+	switch expVal := claims.Exp.(type) {
+	case float64:
+		if expVal > 0 {
+			return normaliseUnix(int64(expVal)), true
+		}
+	case int64:
+		if expVal > 0 {
+			return normaliseUnix(expVal), true
+		}
+	case int:
+		if expVal > 0 {
+			return normaliseUnix(int64(expVal)), true
+		}
+	case string:
+		if sec, errParse := strconv.ParseInt(strings.TrimSpace(expVal), 10, 64); errParse == nil && sec > 0 {
+			return normaliseUnix(sec), true
+		}
 	}
 	return time.Time{}, false
 }

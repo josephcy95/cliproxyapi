@@ -55,8 +55,25 @@ const (
 	// ParentSessionIDMetadataKey stores the parent session identity for hierarchical sessions and forks.
 	ParentSessionIDMetadataKey = "parent_session_id"
 	// LCPAffinitySessionIDMetadataKey stores an optional caller-provided LCP routing identity.
-	// The fork does not run an LCP matcher; this key is preserved for SDK metadata passthrough.
 	LCPAffinitySessionIDMetadataKey = "lcp_affinity_session_id"
+	// IsForkMetadataKey indicates whether the request represents a conversational branch or fork.
+	IsForkMetadataKey = "is_fork"
+	// IsCompactionMetadataKey indicates whether the request represents a context compaction continuation.
+	IsCompactionMetadataKey = "is_compaction"
+	// NodeKindMetadataKey indicates the session DAG topology kind ("compaction", "fork", or "trunk").
+	NodeKindMetadataKey = "node_kind"
+	// LCPTailFingerprintsMetadataKey stores the actual trailing turn fingerprints for context compaction matching.
+	LCPTailFingerprintsMetadataKey = "lcp_tail_fingerprints"
+	// LCPEnvironmentDigestMetadataKey stores the environment digest across all system and developer instructions.
+	LCPEnvironmentDigestMetadataKey = "lcp_environment_digest"
+	// LCPAccessGenerationMetadataKey stores the monotonic access generation when an LCP entry was touched or bound.
+	LCPAccessGenerationMetadataKey = "lcp_access_generation"
+	// LCPFingerprintMetadataKey stores bounded request-scoped turn fingerprints so
+	// SessionAffinitySelector.OnResult can avoid reparsing the original payload.
+	LCPFingerprintMetadataKey = "lcp_fingerprints"
+	// LCPMinPrefixLengthMetadataKey stores the minimum eligible prefix boundary for
+	// the bounded LCP fingerprint sequence.
+	LCPMinPrefixLengthMetadataKey = "lcp_min_prefix_length"
 	// CallerScopeMetadataKey isolates inferred session identities between downstream callers.
 	CallerScopeMetadataKey = "caller_scope"
 	// SessionAffinityProviderMetadataKey carries the affinity selection namespace
@@ -205,6 +222,9 @@ type Options struct {
 	WebSocketResponseObserver WebSocketResponseObserver
 	// ExecutionLifecycle owns Home-dispatched execution resources. Executors must not add it to request metadata.
 	ExecutionLifecycle ExecutionLifecycle
+	// ProxyURL overrides the credential and global proxy for this execution only.
+	// Credential refresh and token exchange must ignore it.
+	ProxyURL string
 }
 
 // EnsureMetadata initializes and returns Metadata, ensuring it is non-nil.

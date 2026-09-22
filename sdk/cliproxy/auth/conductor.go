@@ -77,6 +77,12 @@ type PluginScheduler interface {
 	PickAuth(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, bool, error)
 }
 
+// PluginSchedulerAcrossPriorities is an optional interface implemented by schedulers
+// that opt into receiving candidates across all priority tiers.
+type PluginSchedulerAcrossPriorities interface {
+	SchedulerWantsAcrossPriorities() bool
+}
+
 type pluginSchedulerState interface {
 	HasScheduler() bool
 }
@@ -142,6 +148,9 @@ type Manager struct {
 	selectorMu                sync.Mutex
 	configCooldownMu          sync.Mutex
 	authStateLocks            sync.Map
+	syncSchedulerMu           sync.Mutex
+	structuralEpoch           atomic.Uint64
+	syncedVersion             atomic.Uint64
 	auths                     map[string]*Auth
 	scheduler                 *authScheduler
 	// pluginScheduler runs outside m.mu before falling back to native selection.

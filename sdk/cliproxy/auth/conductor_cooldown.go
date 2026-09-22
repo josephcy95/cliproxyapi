@@ -907,9 +907,18 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 			if disabledByExhaustion {
 				// Auth was disabled for repeated exhaustion / auth-death.
-			} else if modelKey != "" {
+				// The model failure is still recorded below so the triggering model stays cooled.
+			}
+			if modelKey != "" {
 				// Connection-lifecycle, request-scoped, and client-fault errors skip model cool.
 				if !shouldSkipCredentialCooldown(result.Error) {
+					keepDisabled := auth.Disabled || auth.Status == StatusDisabled
+					savedStatus := auth.Status
+					savedMessage := auth.StatusMessage
+					savedReason := ""
+					if auth.Metadata != nil {
+						savedReason, _ = auth.Metadata["disabled_reason"].(string)
+					}
 					disableCooling := m.cooldownDisabledForAuth(auth)
 					if result.Error != nil && result.Error.Code == ErrorCodeForceCooldown {
 						disableCooling = false
@@ -1083,9 +1092,23 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 						state.NextRetryAfter = now.Add(transientErrorCooldown)
 						state.Unavailable = true
 					}
-					auth.Status = StatusError
+					if !keepDisabled {
+						auth.Status = StatusError
+					}
 					auth.UpdatedAt = now
 					updateAggregatedAvailability(auth, now)
+					if keepDisabled {
+						auth.Disabled = true
+						auth.Status = savedStatus
+						auth.StatusMessage = savedMessage
+						if auth.Metadata == nil {
+							auth.Metadata = make(map[string]any)
+						}
+						if savedReason != "" {
+							auth.Metadata["disabled_reason"] = savedReason
+							auth.Metadata["disabled"] = true
+						}
+					}
 				}
 			} else {
 				disableCooling := m.cooldownDisabledForAuth(auth)
@@ -1172,6 +1195,7 @@ func (m *Manager) reportHomeResult(ctx context.Context, result Result, auth *Aut
 	}
 	m.hook.OnResult(ctx, result)
 	m.publishErrorEvent(result, snapshot)
+	m.updateSessionAffinity(result)
 }
 
 func (m *Manager) recordAvailabilityNeutralResult(ctx context.Context, result Result) {
@@ -1719,7 +1743,17 @@ func hasUnauthorizedAuthFailure(auth *Auth) bool {
 	if auth == nil || auth.LastError == nil {
 		return false
 	}
-	return auth.LastError.StatusCode() == http.StatusUnauthorized || strings.EqualFold(auth.LastError.Code, "unauthorized")
+	if auth.Unavailable && auth.Status == StatusError && auth.NextRefreshAfter.IsZero() &&
+		(auth.LastError.StatusCode() == http.StatusUnauthorized || strings.EqualFold(auth.LastError.Code, "unauthorized")) {
+		return true
+	}
+	return false
+}
+
+// HasUnauthorizedAuthFailure reports whether the auth has a terminal unauthorized error
+// with no pending refresh scheduled.
+func HasUnauthorizedAuthFailure(auth *Auth) bool {
+	return hasUnauthorizedAuthFailure(auth)
 }
 
 func refreshErrorFromError(err error) *Error {

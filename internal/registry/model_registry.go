@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	misc "github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
@@ -181,12 +182,18 @@ type ModelRegistry struct {
 	clientModelInfos map[string]map[string]*ModelInfo
 	// clientProviders maps client ID to its provider identifier
 	clientProviders map[string]string
+	// clientEpochs tracks monotonic registration epochs for each client ID
+	clientEpochs map[string]uint64
+	// clientGenerations tracks the latest generation applied for each client ID
+	clientGenerations map[string]uint64
 	// mutex ensures thread-safe access to the registry
 	mutex *sync.RWMutex
 	// availableModelsCache stores per-handler snapshots for GetAvailableModels.
 	availableModelsCache map[string]availableModelsCacheEntry
 	// generation tracks changes to model registrations and availability.
 	generation uint64
+	// registrationEpoch tracks monotonic client registration and deregistration structural changes.
+	registrationEpoch atomic.Uint64
 	// hook is an optional callback sink for model registration changes
 	hook ModelRegistryHook
 }
@@ -203,6 +210,8 @@ func GetGlobalRegistry() *ModelRegistry {
 			clientModels:         make(map[string][]string),
 			clientModelInfos:     make(map[string]map[string]*ModelInfo),
 			clientProviders:      make(map[string]string),
+			clientEpochs:         make(map[string]uint64),
+			clientGenerations:    make(map[string]uint64),
 			availableModelsCache: make(map[string]availableModelsCacheEntry),
 			mutex:                &sync.RWMutex{},
 		}
@@ -228,6 +237,15 @@ func (r *ModelRegistry) GetGeneration() uint64 {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 	return r.generation
+}
+
+// RegistrationEpoch returns a monotonically increasing epoch that increments whenever
+// client model registrations or deregistrations occur.
+func (r *ModelRegistry) RegistrationEpoch() uint64 {
+	if r == nil {
+		return 0
+	}
+	return r.registrationEpoch.Load()
 }
 
 // LookupModelInfo searches dynamic registry (provider-specific > global) then static definitions.
@@ -290,7 +308,7 @@ func responsesWebSearchProviderPathSupport(provider string) *bool {
 	switch provider {
 	case "codex", "xai", "claude", "antigravity":
 		return boolPointer(true)
-	case "openai", "openai-compatibility", "gemini", "aistudio", "vertex", "kimi", "interactions", "gemini-interactions":
+	case "openai", "openai-compatibility", "gemini", "aistudio", "vertex", "kimi", "kimi-ai", "kimi.ai", "kimi.com", "interactions", "gemini-interactions":
 		return boolPointer(false)
 	default:
 		if strings.HasPrefix(provider, "openai-compatible-") {
@@ -441,6 +459,17 @@ func (r *ModelRegistry) RegisterClient(clientID, clientProvider string, models [
 		misc.LogCredentialSeparator()
 		return
 	}
+
+	// Monotonically increment client registration epoch and reset generation to 0.
+	if r.clientEpochs == nil {
+		r.clientEpochs = make(map[string]uint64)
+	}
+	if r.clientGenerations == nil {
+		r.clientGenerations = make(map[string]uint64)
+	}
+	r.clientEpochs[clientID]++
+	r.clientGenerations[clientID] = uint64(0)
+	r.registrationEpoch.Add(1)
 
 	now := time.Now()
 
@@ -770,6 +799,16 @@ func (r *ModelRegistry) UnregisterClient(clientID string) {
 
 // unregisterClientInternal performs the actual client unregistration (internal, no locking)
 func (r *ModelRegistry) unregisterClientInternal(clientID string) {
+	if r.clientGenerations == nil {
+		r.clientGenerations = make(map[string]uint64)
+	}
+	if r.clientEpochs == nil {
+		r.clientEpochs = make(map[string]uint64)
+	}
+	r.clientEpochs[clientID]++
+	r.clientGenerations[clientID]++
+	r.registrationEpoch.Add(1)
+
 	models, exists := r.clientModels[clientID]
 	provider, hasProvider := r.clientProviders[clientID]
 	if !exists {

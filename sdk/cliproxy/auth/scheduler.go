@@ -64,6 +64,48 @@ func (s *authScheduler) setCodexSelectionPolicy(requireAllow, reserveMarked, pre
 	s.mu.Unlock()
 }
 
+// needsSyncFromMap reports whether the scheduler's credential set differs from the
+// manager snapshot. Cooldown and quota updates do not count; those stay on the
+// in-memory scheduler without a full rebuild.
+func (s *authScheduler) needsSyncFromMap(auths map[string]*Auth) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	active := 0
+	for _, auth := range auths {
+		if auth == nil {
+			continue
+		}
+		authID := strings.TrimSpace(auth.ID)
+		if auth.Disabled || auth.Status == StatusDisabled || authID == "" {
+			if authID != "" {
+				if _, exists := s.authProviders[authID]; exists {
+					return true
+				}
+			}
+			continue
+		}
+		providerKey := executorKeyFromAuth(auth)
+		if providerKey == "" {
+			if _, exists := s.authProviders[authID]; exists {
+				return true
+			}
+			continue
+		}
+		active++
+		if s.authProviders[authID] != providerKey {
+			return true
+		}
+		providerState := s.providers[providerKey]
+		if providerState == nil || providerState.auths[authID] == nil {
+			return true
+		}
+	}
+	return active != len(s.authProviders)
+}
+
 // providerScheduler stores auth metadata and model shards for a single provider.
 type providerScheduler struct {
 	providerKey string

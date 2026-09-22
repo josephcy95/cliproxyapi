@@ -116,6 +116,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(authClone)
 	}
+	m.structuralEpoch.Add(1)
 	m.queueRefreshReschedule(auth.ID)
 	_ = m.persist(ctx, auth)
 	m.hook.OnAuthRegistered(ctx, auth.Clone())
@@ -225,6 +226,13 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 			if len(resumed) > 0 {
 				cooldownStateChanged = true
 			}
+			if existing.Disabled || existing.Status == StatusDisabled {
+				cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
+			}
+			// The follow-up auth sync hydrates ModelStates from metadata.runtime.
+			// Rewrite that block from the cleared states so a replaced token cannot
+			// resurrect the unauthorized cooldown it just invalidated.
+			syncAuthRuntimeMetadata(auth, now)
 		}
 		// Preserve credential_quota across reload/token refresh even when CredentialsChanged
 		// (upstream behavior). Rate limits are account-scoped, not token-string-scoped.
@@ -264,6 +272,7 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(authClone)
 	}
+	m.structuralEpoch.Add(1)
 	m.queueRefreshReschedule(auth.ID)
 	if !persistMetaMint {
 		_ = m.persist(ctx, auth)
@@ -315,6 +324,7 @@ func (m *Manager) Remove(ctx context.Context, id string) {
 	if m.scheduler != nil {
 		m.scheduler.removeAuth(id)
 	}
+	m.structuralEpoch.Add(1)
 	m.queueRefreshUnschedule(id)
 	m.invalidateSessionAffinity(id)
 
@@ -374,6 +384,7 @@ func (m *Manager) Load(ctx context.Context) error {
 	}
 	m.rebuildAPIKeyModelAliasLocked(cfg)
 	m.mu.Unlock()
+	m.structuralEpoch.Add(1)
 	m.syncScheduler()
 	return nil
 }
