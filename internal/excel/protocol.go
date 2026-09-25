@@ -92,6 +92,7 @@ const (
 
 // RelayCall is a tool call recovered from assistant text.
 type RelayCall struct {
+	Namespace string
 	Name      string
 	Arguments string
 	Custom    bool
@@ -130,11 +131,11 @@ func (c *Catalog) ParseMarker(text string) (RelayCall, bool) {
 				if errMarshal != nil {
 					return RelayCall{}, false
 				}
-				return RelayCall{Name: spec.Name, Arguments: string(encoded), Custom: true}, true
+				return RelayCall{Name: spec.Name, Namespace: spec.Namespace, Arguments: string(encoded), Custom: true}, true
 			}
 			return RelayCall{}, false
 		}
-		return RelayCall{Name: spec.Name, Arguments: input, Custom: true}, true
+		return RelayCall{Name: spec.Name, Namespace: spec.Namespace, Arguments: input, Custom: true}, true
 	}
 	args, exists := payload["arguments"]
 	if !exists {
@@ -144,7 +145,7 @@ func (c *Catalog) ParseMarker(text string) (RelayCall, bool) {
 	if errMarshal != nil {
 		return RelayCall{}, false
 	}
-	return RelayCall{Name: spec.Name, Arguments: string(encoded)}, true
+	return RelayCall{Name: spec.Name, Namespace: spec.Namespace, Arguments: string(encoded)}, true
 }
 
 // firstJSONObject decodes the first complete JSON object in text, ignoring
@@ -318,6 +319,8 @@ func relayProtocolMessage(catalog *Catalog, clientInstructions string) string {
 	builder.WriteString("- Do not stop at commentary saying you will take an action: emit the marker in the same reply.\n")
 	if strings.TrimSpace(clientInstructions) != "" {
 		builder.WriteString("\nThe external client's own operating instructions follow and take precedence over the spreadsheet-agent role above.\n")
+		builder.WriteString(clientInstructions)
+		builder.WriteString("\n")
 	}
 	builder.WriteString("\nAvailable client tools:\n")
 	builder.WriteString(catalogJSON(catalog))
@@ -469,6 +472,16 @@ func CleanInput(rawInput any) ([]any, error) {
 			continue
 		}
 		kind := strings.ToLower(strings.TrimSpace(stringField(item, "type")))
+		// Responses permits message items without an explicit type.
+		if kind == "" && stringField(item, "role") != "" {
+			copyItem := make(map[string]any, len(item)+1)
+			for key, value := range item {
+				copyItem[key] = value
+			}
+			copyItem["type"] = "message"
+			item = copyItem
+			kind = "message"
+		}
 		switch kind {
 		case "reasoning", "item_reference":
 			// Dropped: see the function comment.

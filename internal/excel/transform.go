@@ -50,9 +50,10 @@ type Transform struct {
 	sawFinish  bool
 	terminal   map[string]any
 	// producedOutput records whether any assistant text or tool call reached the
-	// client. A turn that produced none is turned into an explanatory message
-	// rather than a silent empty reply.
+	// client. A turn that produced none fails explicitly instead of falsely
+	// completing the downstream agent loop.
 	producedOutput bool
+	messageSeen    bool
 
 	currentEvent string
 	currentData  strings.Builder
@@ -91,6 +92,8 @@ func (t *Transform) Close() [][]byte {
 		out = append(out, t.dispatch(strings.TrimRight(string(t.buffer), "\r"))...)
 		t.buffer = nil
 	}
+	// Dispatch a final data line even when EOF arrives without an SSE blank line.
+	out = append(out, t.dispatchEvent()...)
 	// A stream that ended without a terminal event still needs the held text
 	// released, otherwise the client loses assistant output entirely.
 	if !t.sawFinish {
@@ -259,6 +262,9 @@ func markerHoldLength(text string) int {
 func (t *Transform) onOutputItem(kind string, decoded map[string]any, payload string) [][]byte {
 	item, _ := decoded["item"].(map[string]any)
 	itemType := strings.ToLower(stringField(item, "type"))
+	if itemType == "message" {
+		t.messageSeen = true
+	}
 	if itemType == "reasoning" {
 		return nil
 	}
@@ -287,6 +293,12 @@ func (t *Transform) onTerminal(kind string, decoded map[string]any, payload stri
 		text := t.assembled.String()
 		if text == "" && response != nil {
 			text = responseText(response)
+			// Some backends provide the answer only in the terminal payload.
+			// Feed it through the same marker handling and text flush path.
+			t.assembled.WriteString(text)
+			if strings.Contains(text, MarkerOpen) {
+				t.markerMode = true
+			}
 		}
 		if call, okCall := t.catalog.ParseMarker(text); okCall {
 			t.heldText = nil
@@ -294,6 +306,11 @@ func (t *Transform) onTerminal(kind string, decoded map[string]any, payload stri
 			t.emitted = len(t.assembled.String())
 			return t.synthesize(call)
 		}
+	}
+	// A complete payload without streamed items needs the full message lifecycle,
+	// not an orphan text delta that strict clients silently ignore.
+	if kind == "response.completed" && !t.messageSeen && !t.producedOutput && !t.markerMode && strings.TrimSpace(responseText(t.terminal)) != "" {
+		return t.synthesizeMessage(responseText(t.terminal), kind)
 	}
 	out, scrubbed := t.release()
 	if t.terminal == nil {
@@ -308,13 +325,17 @@ func (t *Transform) onTerminal(kind string, decoded map[string]any, payload stri
 		}
 	}
 	if !t.producedOutput && kind == "response.completed" {
-		// The model produced no text and no relayable tool call. That happens when
-		// it reaches for one of the backend's own tools, whose calls this route
-		// discards. Returning nothing would surface as a hung agent, so explain it
-		// in the assistant turn instead.
-		terminal = withAssistantNotice(terminal, emptyTurnNotice)
-		out = append(out, t.deltaEvent(emptyTurnNotice))
+		// Do not manufacture a successful final answer after dropping all output.
+		// Clients interpret a successful empty turn as completion of the agent loop.
+		kind = "response.failed"
+		terminal["status"] = "failed"
+		terminal["error"] = map[string]any{
+			"type": "server_error", "code": "excel_no_usable_output",
+			"message": "Excel backend returned no usable assistant output or client tool call; retry the request.",
+		}
 	}
+
+	t.terminal = terminal
 	// The event wraps the response object as {"type":...,"response":{...}}; it is
 	// NOT the response object itself. Emitting the bare object is an event a
 	// strict Responses client cannot recognise, so it would miss the terminal
@@ -322,38 +343,26 @@ func (t *Transform) onTerminal(kind string, decoded map[string]any, payload stri
 	return append(out, encodeEvent(map[string]any{"type": kind, "response": terminal}))
 }
 
-// emptyTurnNotice is shown when a completed turn carried no assistant output.
-const emptyTurnNotice = "The model did not return an answer for this request. " +
-	"It most likely tried to use a built-in spreadsheet tool that this route does not support. " +
-	"Please rephrase the request, or retry."
-
-// withAssistantNotice replaces the response output with a single assistant
-// message carrying the notice, preserving the rest of the response envelope.
-func withAssistantNotice(response map[string]any, notice string) map[string]any {
-	items, _ := response["output"].([]any)
-	for _, raw := range items {
-		item, okItem := raw.(map[string]any)
-		if !okItem {
-			continue
-		}
-		if strings.EqualFold(stringField(item, "type"), "message") {
-			// A message item exists but carried no text; fill it in.
-			item["content"] = []any{
-				map[string]any{"type": "output_text", "text": notice},
-			}
-			item["status"] = "completed"
-			return response
-		}
+// synthesizeMessage emits the lifecycle strict Responses clients require when
+// the backend returned text only in the terminal object.
+func (t *Transform) synthesizeMessage(text, kind string) [][]byte {
+	id := "msg_" + t.callID("assistant")
+	part := map[string]any{"type": "output_text", "text": text, "annotations": []any{}}
+	item := map[string]any{"id": id, "type": "message", "role": "assistant", "status": "completed", "content": []any{part}}
+	t.terminal["output"] = []any{item}
+	t.producedOutput = true
+	t.emitted = len(t.assembled.String())
+	t.heldText = nil
+	t.heldNative = nil
+	return [][]byte{
+		encodeEvent(map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"id": id, "type": "message", "role": "assistant", "status": "in_progress", "content": []any{}}}),
+		encodeEvent(map[string]any{"type": "response.content_part.added", "output_index": 0, "item_id": id, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}}),
+		encodeEvent(map[string]any{"type": "response.output_text.delta", "output_index": 0, "item_id": id, "content_index": 0, "delta": text}),
+		encodeEvent(map[string]any{"type": "response.output_text.done", "output_index": 0, "item_id": id, "content_index": 0, "text": text}),
+		encodeEvent(map[string]any{"type": "response.content_part.done", "output_index": 0, "item_id": id, "content_index": 0, "part": part}),
+		encodeEvent(map[string]any{"type": "response.output_item.done", "output_index": 0, "item": item}),
+		encodeEvent(map[string]any{"type": kind, "response": t.terminal}),
 	}
-	response["output"] = []any{
-		map[string]any{
-			"type":    "message",
-			"role":    "assistant",
-			"status":  "completed",
-			"content": []any{map[string]any{"type": "output_text", "text": notice}},
-		},
-	}
-	return response
 }
 
 // release forwards held text and message events, and drops held backend tool
@@ -506,6 +515,10 @@ func (t *Transform) synthesize(call RelayCall) [][]byte {
 		"status":  "completed",
 	}
 	completed[valueKey] = call.Arguments
+	if call.Namespace != "" {
+		inProgress["namespace"] = call.Namespace
+		completed["namespace"] = call.Namespace
+	}
 
 	deltaPayload := map[string]any{
 		"type":         deltaEvent,
