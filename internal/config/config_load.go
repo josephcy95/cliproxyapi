@@ -179,6 +179,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// base-url, because the Command Code base URL is optional and defaults to
 	// the public API host.
 	cfg.SanitizeCommandCodeKeys()
+	cfg.SanitizeExcelKeys()
 
 	// Sanitize Meta keys.
 	cfg.SanitizeMetaKeys()

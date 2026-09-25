@@ -58,6 +58,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeOpenAICompat(ctx)...)
 	// Command Code CLI-mimic provider
 	out = append(out, s.synthesizeCommandCode(ctx)...)
+	// ChatGPT Excel (Basispoints) provider
+	out = append(out, s.synthesizeExcelKeys(ctx)...)
 	// Vertex-compat
 	out = append(out, s.synthesizeVertexCompat(ctx)...)
 

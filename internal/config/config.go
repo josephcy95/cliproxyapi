@@ -138,6 +138,10 @@ type Config struct {
 	// MetaKey defines Meta API key configurations using the same structure as Codex API keys.
 	MetaKey []MetaKey `yaml:"meta-api-key" json:"meta-api-key"`
 
+	// ExcelKey configures the ChatGPT Excel (Basispoints) provider, which serves
+	// Codex Responses clients from the backend used by the official Excel add-in.
+	ExcelKey []ExcelKey `yaml:"excel-api-key" json:"excel-api-key"`
+
 	// Codex configures provider-wide Codex request behavior.
 	Codex CodexConfig `yaml:"codex" json:"codex"`
 

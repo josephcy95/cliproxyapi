@@ -917,3 +917,75 @@ type CommandCodeKey = CodexKey
 
 // CommandCodeModel uses the Codex model mapping structure for Command Code models.
 type CommandCodeModel = CodexModel
+
+// ExcelKey configures the ChatGPT Excel (Basispoints) provider.
+//
+// The provider is reached with the same ChatGPT OAuth token the Codex provider
+// refreshes, so a single access token can serve both. The add-in identity
+// headers are applied by the executor; Headers here only needs to override them
+// when the backend's expectations change.
+type ExcelKey struct {
+	// AccessToken is the ChatGPT OAuth access token (the "Bearer" value without
+	// the scheme). This is the primary credential mode: it makes the alias
+	// usable without touching the Codex auth files.
+	AccessToken string `yaml:"access-token,omitempty" json:"access-token,omitempty"`
+
+	// AccountID is the ChatGPT account id sent as Chatgpt-Account-Id. Required
+	// when AccessToken is set.
+	AccountID string `yaml:"account-id,omitempty" json:"account-id,omitempty"`
+
+	// UseCodexAuths lets loaded Codex accounts serve this provider instead of an
+	// explicit access token. Leave false when AccessToken is configured.
+	UseCodexAuths bool `yaml:"use-codex-auths,omitempty" json:"use-codex-auths,omitempty"`
+
+	// BaseURL overrides the Excel backend origin. Defaults to the add-in origin.
+	BaseURL string `yaml:"base-url,omitempty" json:"base-url,omitempty"`
+
+	// Models overrides the advertised alias list.
+	Models []ExcelModel `yaml:"models,omitempty" json:"models,omitempty"`
+
+	// Headers overrides or adds client-identity headers sent upstream.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// Disabled prevents this provider from being used for routing.
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+
+	// DisableCooling overrides the global cooling policy for this provider.
+	DisableCooling *bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
+
+	// RequestRetry optionally overrides the global request-retry for this provider.
+	RequestRetry *int `yaml:"request-retry,omitempty" json:"request-retry,omitempty"`
+}
+
+// ExcelModel describes one Excel-backed alias.
+type ExcelModel struct {
+	// Name is the upstream model slug, e.g. "gpt-5.6-sol".
+	Name string `yaml:"name" json:"name"`
+
+	// Alias is the client-facing model name, e.g. "gpt-5.6-sol-excel".
+	Alias string `yaml:"alias,omitempty" json:"alias,omitempty"`
+
+	// DisplayName is the human-readable catalog name.
+	DisplayName string `yaml:"display-name,omitempty" json:"display-name,omitempty"`
+
+	// MaxContextLength overrides the context window advertised to clients.
+	MaxContextLength int `yaml:"max-context-length,omitempty" json:"max-context-length,omitempty"`
+
+	// Thinking configures the reasoning efforts accepted for this model.
+	Thinking *registry.ThinkingSupport `yaml:"thinking,omitempty" json:"thinking,omitempty"`
+}
+
+// GetName implements the model entry interface.
+func (m ExcelModel) GetName() string { return m.Name }
+
+// GetAlias implements the model entry interface.
+func (m ExcelModel) GetAlias() string { return m.Alias }
+
+// GetDisplayName implements the model entry interface.
+func (m ExcelModel) GetDisplayName() string { return m.DisplayName }
+
+// GetMaxContextLength implements the model context interface.
+func (m ExcelModel) GetMaxContextLength() int { return m.MaxContextLength }
+
+// GetThinking implements the model entry interface.
+func (m ExcelModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }

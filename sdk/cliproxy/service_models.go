@@ -187,6 +187,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	case "devin":
 		models = registry.GetDevinModels()
 		models = applyExcludedModels(models, excluded)
+	case excelProviderKey:
+		models = helps.ExcelModels()
+		models = applyExcludedModels(models, excluded)
 	case "meta":
 		models = registry.GetMetaModels()
 		if entry := s.resolveConfigMetaKey(a); entry != nil {

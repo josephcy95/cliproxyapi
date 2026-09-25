@@ -225,6 +225,30 @@ func (cfg *Config) SanitizeCommandCodeKeys() {
 	}
 }
 
+// SanitizeExcelKeys normalizes ChatGPT Excel provider entries.
+//
+// Like SanitizeCommandCodeKeys it must NOT drop entries missing a BaseURL: the
+// backend origin is optional and defaults to the add-in host, so an omitted
+// value is valid configuration rather than a removed credential.
+func (cfg *Config) SanitizeExcelKeys() {
+	if cfg == nil || len(cfg.ExcelKey) == 0 {
+		return
+	}
+	for i := range cfg.ExcelKey {
+		entry := &cfg.ExcelKey[i]
+		entry.AccessToken = strings.TrimSpace(entry.AccessToken)
+		entry.AccountID = strings.TrimSpace(entry.AccountID)
+		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
+		entry.Headers = NormalizeHeaders(entry.Headers)
+		for j := range entry.Models {
+			model := &entry.Models[j]
+			model.Name = strings.TrimSpace(model.Name)
+			model.Alias = strings.TrimSpace(model.Alias)
+			model.DisplayName = strings.TrimSpace(model.DisplayName)
+		}
+	}
+}
+
 // NormalizeCloakConfig trims strings and removes blank sensitive words.
 func NormalizeCloakConfig(cloak *CloakConfig) *CloakConfig {
 	if cloak == nil {
