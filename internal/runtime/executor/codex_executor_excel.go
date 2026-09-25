@@ -81,6 +81,9 @@ func (e *CodexExecutor) executeExcel(ctx context.Context, auth *cliproxyauth.Aut
 		chunk, errRead := reader.ReadBytes('\n')
 		if len(chunk) > 0 {
 			transform.Write(chunk)
+			if transform.Terminal() != nil {
+				break
+			}
 		}
 		if errRead != nil {
 			if errRead != io.EOF {
@@ -138,6 +141,10 @@ func (e *CodexExecutor) executeExcelStream(ctx context.Context, auth *cliproxyau
 	out := make(chan cliproxyexecutor.StreamChunk)
 	go func() {
 		defer close(out)
+		// The outer function has returned by now, so it cannot track errors
+		// from this goroutine. Keep the stream outcome local to avoid a race.
+		var streamErr error
+		defer reporter.TrackFailure(ctx, &streamErr)
 		defer func() {
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("codex excel: close response body error: %v", errClose)
@@ -145,40 +152,52 @@ func (e *CodexExecutor) executeExcelStream(ctx context.Context, auth *cliproxyau
 		}()
 
 		transform := excel.NewTransform(plan.catalog, plan.clientModel)
+		forward := func(events [][]byte) bool {
+			// Account before exposing completion: the client may disconnect as
+			// soon as it receives the terminal frame, and EOF may never arrive.
+			if payload := transform.Terminal(); payload != nil {
+				publishExcelUsage(ctx, reporter, payload)
+			}
+			for _, event := range events {
+				select {
+				case out <- cliproxyexecutor.StreamChunk{Payload: event}:
+				case <-ctx.Done():
+					streamErr = ctx.Err()
+					return false
+				}
+			}
+			return true
+		}
 		reader := bufio.NewReaderSize(httpResp.Body, 64*1024)
 		for {
 			chunk, errRead := reader.ReadBytes('\n')
 			if len(chunk) > 0 {
-				for _, event := range transform.Write(chunk) {
-					select {
-					case out <- cliproxyexecutor.StreamChunk{Payload: event}:
-					case <-ctx.Done():
-						return
-					}
+				if !forward(transform.Write(chunk)) {
+					return
+				}
+				if transform.Terminal() != nil {
+					return
 				}
 			}
-			if errRead != nil {
-				if errRead == io.EOF {
-					break
-				}
-				select {
-				case out <- cliproxyexecutor.StreamChunk{Err: errRead}:
-				case <-ctx.Done():
-				}
-				return
+			if errRead == nil {
+				continue
 			}
-		}
-		for _, event := range transform.Close() {
+			if errRead == io.EOF {
+				if !forward(transform.Close()) || transform.Terminal() != nil {
+					return
+				}
+				streamErr = newCodexIncompleteStreamError()
+			} else {
+				streamErr = errRead
+			}
+			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+			reporter.PublishFailure(ctx, streamErr)
 			select {
-			case out <- cliproxyexecutor.StreamChunk{Payload: event}:
+			case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
 			case <-ctx.Done():
-				return
 			}
+			return
 		}
-		if payload := transform.Terminal(); payload != nil {
-			publishExcelUsage(ctx, reporter, payload)
-		}
-		reporter.EnsurePublished(ctx)
 	}()
 	return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: out}, nil
 }
@@ -329,10 +348,8 @@ func excelErrorMessage(status int, body []byte) string {
 // publishExcelUsage forwards the backend's token accounting to the usage
 // reporter, so these turns are counted like any other model's.
 func publishExcelUsage(ctx context.Context, reporter *helps.UsageReporter, payload map[string]any) {
-	rawUsage, okUsage := payload["usage"].(map[string]any)
-	if !okUsage {
-		return
-	}
+	// Missing token usage must not suppress request counting.
+	rawUsage, _ := payload["usage"].(map[string]any)
 	detail := usage.Detail{}
 	if value, okValue := rawUsage["input_tokens"].(float64); okValue {
 		detail.InputTokens = int64(value)
@@ -351,6 +368,17 @@ func publishExcelUsage(ctx context.Context, reporter *helps.UsageReporter, paylo
 	if details, okDetails := rawUsage["output_tokens_details"].(map[string]any); okDetails {
 		if value, okValue := details["reasoning_tokens"].(float64); okValue {
 			detail.ReasoningTokens = int64(value)
+		}
+	}
+	if payload["status"] == "failed" {
+		encoded, errMarshal := json.Marshal(map[string]any{"type": "response.failed", "response": payload})
+		if errMarshal != nil {
+			reporter.PublishFailureWithDetail(ctx, detail, errMarshal)
+			return
+		}
+		if failure, _, ok := codexTerminalFailureErr(encoded); ok {
+			reporter.PublishFailureWithDetail(ctx, detail, failure)
+			return
 		}
 	}
 	reporter.Publish(ctx, detail)
