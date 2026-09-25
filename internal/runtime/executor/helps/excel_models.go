@@ -7,9 +7,10 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
-// ExcelProvider is the provider identifier used for executor routing, catalog
-// entries and usage attribution. It matches ExcelExecutor.Identifier().
-const ExcelProvider = "excel"
+// ExcelProvider is the ownership label used for the Excel-backed catalog
+// entries. They are Codex models for routing, credential selection, usage and
+// cooldown; this only marks which upstream conversation serves them.
+const ExcelProvider = "openai"
 
 // ExcelModels returns the static catalog for the Excel-backed aliases.
 //
@@ -24,10 +25,10 @@ func ExcelModels() []*registry.ModelInfo {
 			Object:              "model",
 			Created:             now,
 			OwnedBy:             ExcelProvider,
-			Type:                ExcelProvider,
+			Type:                "codex",
 			DisplayName:         model.DisplayName,
-			ContextLength:       model.ContextLength,
-			MaxCompletionTokens: model.ContextLength,
+			ContextLength:       model.ContextLengthValue(),
+			MaxCompletionTokens: model.ContextLengthValue(),
 			Thinking:            &registry.ThinkingSupport{Levels: append([]string(nil), model.Efforts...)},
 		})
 	}

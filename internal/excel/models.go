@@ -24,7 +24,8 @@ type Model struct {
 	Alias string
 	// DisplayName is shown in the Codex client model picker.
 	DisplayName string
-	// ContextLength is the advertised context window.
+	// ContextLength overrides the advertised context window. Zero means unknown,
+	// in which case DefaultContextLength is advertised.
 	ContextLength int
 	// Efforts lists the reasoning efforts the backend accepts for this model.
 	Efforts []string
@@ -36,37 +37,51 @@ type Model struct {
 // prompt text and the upstream slug is what selects the actual backend model.
 var DefaultModels = []Model{
 	{
-		Slug:          "gpt-6-astra",
-		Alias:         "gpt-6-astra-excel",
-		DisplayName:   "6-Astra Excel",
-		ContextLength: 272_000,
-		Efforts:       []string{"medium", "high", "xhigh"},
+		Slug:        "gpt-6-astra",
+		Alias:       "gpt-6-astra-excel",
+		DisplayName: "6-Astra Excel",
+		Efforts:     []string{"low", "medium", "high", "xhigh"},
 	},
 	{
-		Slug:          "gpt-5.6-luna",
-		Alias:         "gpt-5.6-luna-excel",
-		DisplayName:   "5.6-Luna Excel",
-		ContextLength: 200_000,
-		Efforts:       []string{"low", "medium", "high", "xhigh"},
+		Slug:        "gpt-5.6-luna",
+		Alias:       "gpt-5.6-luna-excel",
+		DisplayName: "5.6-Luna Excel",
+		Efforts:     []string{"low", "medium", "high", "xhigh"},
 	},
 	{
-		Slug:          "gpt-5.6-terra",
-		Alias:         "gpt-5.6-terra-excel",
-		DisplayName:   "5.6-Terra Excel",
-		ContextLength: 272_000,
-		Efforts:       []string{"low", "medium", "high", "xhigh"},
+		Slug:        "gpt-5.6-terra",
+		Alias:       "gpt-5.6-terra-excel",
+		DisplayName: "5.6-Terra Excel",
+		Efforts:     []string{"low", "medium", "high", "xhigh"},
 	},
 	{
-		Slug:          "gpt-5.6-sol",
-		Alias:         "gpt-5.6-sol-excel",
-		DisplayName:   "5.6-Sol Excel",
-		ContextLength: 272_000,
-		Efforts:       []string{"low", "medium", "high", "xhigh"},
+		Slug:        "gpt-5.6-sol",
+		Alias:       "gpt-5.6-sol-excel",
+		DisplayName: "5.6-Sol Excel",
+		Efforts:     []string{"low", "medium", "high", "xhigh"},
 	},
+}
+
+// ContextLength returns the advertised window for this model, falling back to
+// DefaultContextLength when the real value is unknown.
+func (m Model) ContextLengthValue() int {
+	if m.ContextLength > 0 {
+		return m.ContextLength
+	}
+	return DefaultContextLength
 }
 
 // DefaultEfforts is used when a model declares no effort list.
 var DefaultEfforts = []string{"low", "medium", "high", "xhigh"}
+
+// DefaultContextLength is advertised for an Excel-backed model whose real window
+// is not known.
+//
+// The backend publishes no model metadata, so the exact per-model window is a
+// guess. A larger value is the safer default here: advertising less than the
+// backend allows would truncate working conversations, and prompt compaction is
+// driven by the backend's own thresholds regardless.
+const DefaultContextLength = 350_000
 
 // EffortAliases maps tolerated spellings onto the wire values the backend wants.
 var EffortAliases = map[string]string{
@@ -89,10 +104,22 @@ func LookupAlias(model string) (Model, bool) {
 	return Model{}, false
 }
 
-// IsAlias reports whether the model name is served by this package.
+// IsAlias reports whether the model name is one of the Excel aliases.
+//
+// Only the "-excel" aliases are served by this protocol. A bare upstream slug
+// such as "gpt-5.6-luna" must keep its normal Codex path: treating it as an
+// Excel model would silently reroute an existing model.
 func IsAlias(model string) bool {
-	_, ok := LookupAlias(model)
-	return ok
+	needle := strings.ToLower(strings.TrimSpace(model))
+	if needle == "" {
+		return false
+	}
+	for _, m := range DefaultModels {
+		if strings.ToLower(m.Alias) == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // SlugFor resolves an alias (or a bare slug) to the upstream model identifier.

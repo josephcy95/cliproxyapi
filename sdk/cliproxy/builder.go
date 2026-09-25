@@ -10,7 +10,6 @@ import (
 	configaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
@@ -275,11 +274,6 @@ func (b *Builder) Build() (*Service, error) {
 	}
 	if b.resultPolicy != nil {
 		coreManager.SetResultPolicy(b.resultPolicy)
-	}
-	// Publish the auth directory so the Excel provider can borrow a Codex token
-	// without owning a second credential store.
-	if b.cfg != nil {
-		executor.SetExcelAuthDir(b.cfg.AuthDir)
 	}
 
 	service := &Service{

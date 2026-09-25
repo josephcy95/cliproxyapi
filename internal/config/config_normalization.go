@@ -236,8 +236,6 @@ func (cfg *Config) SanitizeExcelKeys() {
 	}
 	for i := range cfg.ExcelKey {
 		entry := &cfg.ExcelKey[i]
-		entry.AccessToken = strings.TrimSpace(entry.AccessToken)
-		entry.AccountID = strings.TrimSpace(entry.AccountID)
 		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 		entry.Headers = NormalizeHeaders(entry.Headers)
 		for j := range entry.Models {

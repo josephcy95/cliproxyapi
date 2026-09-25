@@ -918,25 +918,21 @@ type CommandCodeKey = CodexKey
 // CommandCodeModel uses the Codex model mapping structure for Command Code models.
 type CommandCodeModel = CodexModel
 
-// ExcelKey configures the ChatGPT Excel (Basispoints) provider.
+// ExcelKey enables the ChatGPT Excel (Basispoints) models on the Codex provider.
 //
-// The provider is reached with the same ChatGPT OAuth token the Codex provider
-// refreshes, so a single access token can serve both. The add-in identity
-// headers are applied by the executor; Headers here only needs to override them
-// when the backend's expectations change.
+// These models are ordinary Codex models for routing, credential selection,
+// usage attribution and cooldown; only the upstream conversation is different,
+// because the add-in backend does not apply the public endpoint's automatic
+// model routing. Enabling the section is therefore all that is required, and it
+// uses the Codex credentials already loaded.
 type ExcelKey struct {
-	// AccessToken is the ChatGPT OAuth access token (the "Bearer" value without
-	// the scheme). This is the primary credential mode: it makes the alias
-	// usable without touching the Codex auth files.
-	AccessToken string `yaml:"access-token,omitempty" json:"access-token,omitempty"`
+	// Enabled is optional. A section that is present and not disabled enables the
+	// models, so an explicitly empty entry is valid; set false to keep the entry
+	// while switching the models off.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 
-	// AccountID is the ChatGPT account id sent as Chatgpt-Account-Id. Required
-	// when AccessToken is set.
-	AccountID string `yaml:"account-id,omitempty" json:"account-id,omitempty"`
-
-	// UseCodexAuths lets loaded Codex accounts serve this provider instead of an
-	// explicit access token. Leave false when AccessToken is configured.
-	UseCodexAuths bool `yaml:"use-codex-auths,omitempty" json:"use-codex-auths,omitempty"`
+	// Disabled prevents this entry from enabling the models.
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 
 	// BaseURL overrides the Excel backend origin. Defaults to the add-in origin.
 	BaseURL string `yaml:"base-url,omitempty" json:"base-url,omitempty"`
@@ -946,15 +942,6 @@ type ExcelKey struct {
 
 	// Headers overrides or adds client-identity headers sent upstream.
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
-
-	// Disabled prevents this provider from being used for routing.
-	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
-
-	// DisableCooling overrides the global cooling policy for this provider.
-	DisableCooling *bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
-
-	// RequestRetry optionally overrides the global request-retry for this provider.
-	RequestRetry *int `yaml:"request-retry,omitempty" json:"request-retry,omitempty"`
 }
 
 // ExcelModel describes one Excel-backed alias.

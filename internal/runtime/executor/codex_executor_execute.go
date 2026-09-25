@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -27,6 +28,12 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		return e.executeOpenAIImage(ctx, auth, req, opts)
 	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	// An Excel-backed model is served by this same executor and credential, so
+	// routing, auth selection, usage attribution and failure policy stay
+	// identical to every other model; only the upstream conversation differs.
+	if excel.IsAlias(baseModel) {
+		return e.executeExcel(ctx, auth, req, opts, baseModel, false)
+	}
 
 	apiKey, baseURL := codexCreds(auth)
 	if baseURL == "" {

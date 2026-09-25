@@ -217,7 +217,6 @@ func baselineExecutorAuths() []*coreauth.Auth {
 		"meta",
 		"openai-compatibility",
 		constant.CommandCode,
-		excelProviderKey,
 	}
 	auths := make([]*coreauth.Auth, 0, len(providers))
 	for _, provider := range providers {
@@ -317,8 +316,6 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		s.coreManager.RegisterExecutor(executor.NewQoderExecutor(cfg))
 	case constant.CommandCode:
 		s.coreManager.RegisterExecutor(executor.NewCommandCodeExecutor(cfg))
-	case excelProviderKey:
-		s.coreManager.RegisterExecutor(executor.NewExcelExecutor(cfg))
 	case "devin":
 		s.coreManager.RegisterExecutor(executor.NewDevinExecutor(cfg))
 	case "meta":

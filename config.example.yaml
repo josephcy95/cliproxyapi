@@ -941,33 +941,36 @@ nonstream-keepalive-interval: 0
 #         thinking:                              # optional: exact thinking capability for this configured model
 #           levels: ["low", "medium", "high"]
 
-# ChatGPT Excel provider (Codex Responses clients served from the Excel add-in backend).
+# ChatGPT Excel models (Codex Responses clients served from the Excel add-in backend).
 #
-# The Excel backend accepts the same ChatGPT OAuth token family as the Codex
-# provider but does not apply the public Codex endpoint's automatic model
-# routing, so the requested model is not silently substituted. Requests are
-# Responses-only (/v1/responses).
+# These are ordinary Codex models for routing, credential selection, usage
+# recording, cooldown and the model list; only the upstream conversation differs.
+# The backend accepts the same ChatGPT OAuth token family as the Codex provider
+# but does not apply the public endpoint's automatic model routing, so the
+# requested model is not silently substituted. It reuses the Codex credentials
+# already loaded -- no extra sign-in.
 #
-# Preferred setup: reuse the ChatGPT credentials already loaded as Codex
-# accounts, so there is a single token refresh lifecycle.
+# Absent means off. Present means on.
+#
+# The equivalent Management Center switch writes exactly this:
 # excel-api-key:
-#   - use-codex-auths: true        # borrow the token from a loaded Codex account
-#     account-id: ""               # optional: pin to one account; empty uses the first usable one
-#     base-url: "https://bps.openai.com"   # optional; this is the default origin
-#     headers: {}                  # optional: overrides for add-in identity headers
-#     models:                      # optional: overrides the built-in alias list
-#       - name: "gpt-5.6-sol"      # upstream model slug
+#   - {}
+#
+# Optional overrides:
+# excel-api-key:
+#   - base-url: "https://bps.openai.com"   # optional; this is the default origin
+#     headers: {}                          # optional: add-in identity header overrides
+#     models:                              # optional: replace the built-in alias list
+#       - name: "gpt-5.6-sol"              # upstream model slug
 #         alias: "gpt-5.6-sol-excel"
 #         display-name: "5.6-Sol Excel"
 #         max-context-length: 272000
 #         thinking:
 #           levels: ["low", "medium", "high", "xhigh"]
 #
-# Direct credential: use when the token is supplied out of band. The token
-# expires, so the use-codex-auths form above is preferred for everyday use.
-# excel-api-key:
-#   - access-token: "eyJhbGciOi..."   # ChatGPT OAuth access token (no "Bearer " prefix)
-#     account-id: "00000000-0000-0000-0000-000000000000"
+# Note: this backend rejects the "max", "minimal" and "ultra" reasoning efforts
+# (they fall back to "medium"), and injects a spreadsheet system prompt that a
+# caller's own instructions override.
 
 # Vertex API keys (Vertex-compatible endpoints, base-url is optional)
 # vertex-api-key:

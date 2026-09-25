@@ -212,7 +212,7 @@ func TestNormalizeEffort(t *testing.T) {
 		{"gpt-5.6-sol-excel", "HIGH", "high"},
 		{"gpt-5.6-sol-excel", "bogus", "medium"},
 		{"gpt-5.6-sol-excel", "", "medium"},
-		{"gpt-6-astra-excel", "low", "medium"},
+		{"gpt-6-astra-excel", "low", "low"},
 		{"gpt-6-astra-excel", "xhigh", "xhigh"},
 	}
 	for _, testCase := range cases {
