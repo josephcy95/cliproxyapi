@@ -58,6 +58,7 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	providers = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
 	reqMeta := requestExecutionMetadata(ctx)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
+	applyModelAuthPolicy(reqMeta, originalRequestedModel)
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	normalizedModel, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, normalizedModel, reqMeta)
 	if selectionModel := strings.TrimSpace(execOptions.AuthSelectionModel); selectionModel != "" {
@@ -135,6 +136,7 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 	providers = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
 	reqMeta := requestExecutionMetadata(ctx)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
+	applyModelAuthPolicy(reqMeta, originalRequestedModel)
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	normalizedModel, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, normalizedModel, reqMeta)
 	if selectionModel := strings.TrimSpace(execOptions.AuthSelectionModel); selectionModel != "" {
@@ -280,6 +282,7 @@ func (h *BaseAPIHandler) countWithPluginExecutor(ctx context.Context, handlerTyp
 func (h *BaseAPIHandler) pluginExecutorRequest(ctx context.Context, entryProtocol, responseProtocol, modelName, originalRequestedModel string, rawJSON []byte, alt string, stream bool, execOptions modelExecutionOptions) (coreexecutor.Request, coreexecutor.Options) {
 	reqMeta := requestExecutionMetadata(ctx)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
+	applyModelAuthPolicy(reqMeta, originalRequestedModel)
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	modelName, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, modelName, reqMeta)
 	if selectionModel := strings.TrimSpace(execOptions.AuthSelectionModel); selectionModel != "" {
