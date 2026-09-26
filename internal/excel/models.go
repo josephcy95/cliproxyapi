@@ -169,3 +169,16 @@ func NormalizeEffort(model, effort string) string {
 	}
 	return "medium"
 }
+
+// IsRoute recognizes reserved Excel aliases through provider prefixes and reasoning
+// suffixes. Unlike LookupAlias, it never treats a bare upstream slug as Excel.
+func IsRoute(model string) bool {
+	model = strings.TrimSpace(model)
+	if i := strings.LastIndex(model, "("); i >= 0 && strings.HasSuffix(model, ")") {
+		model = model[:i]
+	}
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		model = model[i+1:]
+	}
+	return IsAlias(model)
+}

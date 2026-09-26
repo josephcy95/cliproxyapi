@@ -133,7 +133,6 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 				excluded = entry.ExcludedModels
 			}
 			models = applyExcludedModels(models, excluded)
-			models = s.appendExcelModelsIfEnabled(models)
 			break
 		}
 
@@ -153,8 +152,10 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		default:
 			models = registry.GetCodexProModels()
 		}
+		if a.ExcelEligible() {
+			models = s.appendExcelModelsIfEnabled(models)
+		}
 		models = applyExcludedModels(models, excluded)
-		models = s.appendExcelModelsIfEnabled(models)
 	case "kimi", "kimi-ai", "kimi.ai", "kimi.com":
 		models = registry.GetKimiModels()
 		models = applyExcludedModels(models, excluded)

@@ -13,12 +13,16 @@ import (
 func TestApplyModelAuthPolicyExcludesFreeAccountsForExcel(t *testing.T) {
 	for _, model := range []string{
 		"gpt-6-astra-excel",
+		"kiro/gpt-6-astra-excel(high)",
 		"gpt-5.6-luna-excel",
 		"gpt-5.6-terra-excel",
 		"gpt-5.6-sol-excel",
 	} {
 		meta := map[string]any{}
 		applyModelAuthPolicy(meta, model)
+		if meta[coreexecutor.RequireExcelOAuthMetadataKey] != true {
+			t.Errorf("model %q did not require paid Codex OAuth", model)
+		}
 		if meta[coreexecutor.DisallowFreeAuthMetadataKey] != true {
 			t.Errorf("model %q did not exclude free credentials: %v", model, meta)
 		}

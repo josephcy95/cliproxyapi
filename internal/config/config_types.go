@@ -928,7 +928,8 @@ type CommandCodeModel = CodexModel
 // usage attribution and cooldown; only the upstream conversation is different,
 // because the add-in backend does not apply the public endpoint's automatic
 // model routing. Enabling the section is therefore all that is required, and it
-// uses the Codex credentials already loaded.
+// uses only non-free Codex OAuth auth files already loaded. API keys, other
+// providers, free plans, and unknown plans cannot use these temporary routes.
 type ExcelKey struct {
 	// Enabled is optional. A section that is present and not disabled enables the
 	// models, so an explicitly empty entry is valid; set false to keep the entry

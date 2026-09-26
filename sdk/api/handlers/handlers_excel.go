@@ -8,17 +8,15 @@ import (
 // applyModelAuthPolicy records auth-selection constraints implied by the
 // requested model.
 //
-// The Excel-backed aliases are not available to free-tier accounts, so the
-// scheduler must not consider one. That is enforced through the same
-// disallow-free-auth metadata the image endpoints use, which keeps the decision
-// in the request rather than in each selection path.
+// Excel aliases require paid Codex OAuth, not just the absence of a free plan.
 func applyModelAuthPolicy(meta map[string]any, modelName string) {
 	// Guard on nil, not length: a caller may legitimately pass an empty map and
 	// the policy still has to be recorded.
 	if meta == nil {
 		return
 	}
-	if excel.IsAlias(modelName) {
+	if excel.IsRoute(modelName) {
 		meta[coreexecutor.DisallowFreeAuthMetadataKey] = true
+		meta[coreexecutor.RequireExcelOAuthMetadataKey] = true
 	}
 }

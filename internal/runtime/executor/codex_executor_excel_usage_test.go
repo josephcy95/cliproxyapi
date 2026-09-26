@@ -88,7 +88,7 @@ func TestExcelUsageLifecycle(t *testing.T) {
 			ctx, cancel := context.WithCancel(usage.WithRequestedModelAlias(context.Background(), t.Name()))
 			defer cancel()
 			executor := NewCodexExecutor(&config.Config{})
-			auth := &cliproxyauth.Auth{ID: t.Name(), Index: "excel-test-index", Provider: "codex", Attributes: map[string]string{"api_key": "test-only", "excel_base_url": server.URL}}
+			auth := &cliproxyauth.Auth{ID: t.Name(), Index: "excel-test-index", Provider: "codex", Metadata: map[string]any{"access_token": "test-only", "plan_type": "plus"}, Attributes: map[string]string{"excel_base_url": server.URL}}
 			req := cliproxyexecutor.Request{Model: "gpt-5.6-sol-excel", Payload: []byte(`{"model":"gpt-5.6-sol-excel","input":"hello"}`)}
 			wantFailure := tc.broken || tc.truncated || tc.cancelBefore || tc.failed
 			if tc.stream {

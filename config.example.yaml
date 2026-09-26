@@ -957,7 +957,9 @@ nonstream-keepalive-interval: 0
 # The backend accepts the same ChatGPT OAuth token family as the Codex provider
 # but does not apply the public endpoint's automatic model routing, so the
 # requested model is not silently substituted. It reuses the Codex credentials
-# already loaded -- no extra sign-in.
+# already loaded -- no extra sign-in. These temporary, unofficial routes are
+# restricted to non-free Codex OAuth auth files. API keys (including entries on
+# /ai-providers), other providers, free plans, and unknown plans are ineligible.
 #
 # Absent means off. Present means on.
 #

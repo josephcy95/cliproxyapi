@@ -15,6 +15,9 @@ const RequestedModelMetadataKey = "requested_model"
 // It is optional and may be absent for non-HTTP executions.
 const RequestPathMetadataKey = "request_path"
 
+// RequireExcelOAuthMetadataKey restricts temporary Excel routes to paid Codex OAuth.
+const RequireExcelOAuthMetadataKey = "require_excel_oauth"
+
 // DisallowFreeAuthMetadataKey instructs auth selection to skip known free-tier credentials.
 const DisallowFreeAuthMetadataKey = "disallow_free_auth"
 

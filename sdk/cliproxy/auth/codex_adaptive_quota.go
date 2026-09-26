@@ -36,7 +36,7 @@ func (m *Manager) refreshCodexAdaptiveQuota(ctx context.Context, model string, o
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	eligibility := m.authSelectionEligibilityForManager(ctx, opts)
+	eligibility := m.authSelectionEligibilityForManager(ctx, opts, model)
 	now := time.Now()
 	var candidate *Auth
 	var candidateState codexAdaptiveAccount

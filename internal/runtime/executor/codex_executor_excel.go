@@ -373,14 +373,18 @@ func (e *CodexExecutor) sendExcel(ctx context.Context, client *http.Client, auth
 // prepareExcelHeaders applies the selected credential and the add-in identity
 // headers the backend expects.
 func (e *CodexExecutor) prepareExcelHeaders(req *http.Request, auth *cliproxyauth.Auth) error {
-	apiKey, _ := codexCreds(auth)
-	if strings.TrimSpace(apiKey) == "" {
+	if !auth.ExcelEligible() {
+		return statusErr{code: http.StatusForbidden, msg: "codex excel: requires a non-free Codex OAuth auth file"}
+	}
+	accessToken, _ := auth.Metadata["access_token"].(string)
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
 		return statusErr{
 			code: http.StatusUnauthorized,
 			msg:  "codex excel: the selected credential has no access token",
 		}
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	if accountID := excelAccountIDFor(auth); accountID != "" {
 		req.Header.Set("Chatgpt-Account-Id", accountID)
 	}
@@ -394,6 +398,12 @@ func (e *CodexExecutor) prepareExcelHeaders(req *http.Request, auth *cliproxyaut
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(req, attrs)
+	// Custom headers cannot replace the selected OAuth credential or account.
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Del("Chatgpt-Account-Id")
+	if accountID := excelAccountIDFor(auth); accountID != "" {
+		req.Header.Set("Chatgpt-Account-Id", accountID)
+	}
 	return nil
 }
 

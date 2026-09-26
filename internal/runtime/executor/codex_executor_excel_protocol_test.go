@@ -79,7 +79,7 @@ func TestExcelClientProtocols(t *testing.T) {
 						fmt.Fprint(w, excelProtocolStream(answer))
 					}))
 					defer server.Close()
-					auth := &cliproxyauth.Auth{ID: t.Name(), Provider: "codex", Attributes: map[string]string{"api_key": "test", "excel_base_url": server.URL}}
+					auth := &cliproxyauth.Auth{ID: t.Name(), Provider: "codex", Metadata: map[string]any{"access_token": "test", "plan_type": "plus"}, Attributes: map[string]string{"excel_base_url": server.URL}}
 					req := cliproxyexecutor.Request{Model: "gpt-5.6-sol-excel", Payload: []byte(tc.request)}
 					opts := cliproxyexecutor.Options{SourceFormat: tc.format, OriginalRequest: req.Payload}
 					e := NewCodexExecutor(&config.Config{})
@@ -142,7 +142,7 @@ func TestExcelResponseOverrideAndHistory(t *testing.T) {
 		fmt.Fprint(w, excelProtocolStream("history preserved"))
 	}))
 	defer server.Close()
-	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"api_key": "test", "excel_base_url": server.URL}}
+	auth := &cliproxyauth.Auth{Provider: "codex", Metadata: map[string]any{"access_token": "test", "plan_type": "plus"}, Attributes: map[string]string{"excel_base_url": server.URL}}
 	req := cliproxyexecutor.Request{Model: "gpt-5.6-sol-excel", Payload: payload}
 	for _, stream := range []bool{false, true} {
 		opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, ResponseFormat: sdktranslator.FormatClaude, OriginalRequest: payload}
@@ -183,7 +183,7 @@ func TestExcelWebsocketClientUsesExcelBackend(t *testing.T) {
 	}))
 	defer server.Close()
 	e := NewCodexAutoExecutor(&config.Config{})
-	auth := &cliproxyauth.Auth{ID: t.Name(), Provider: "codex", Attributes: map[string]string{"api_key": "test", "excel_base_url": server.URL, "base_url": server.URL, "websockets": "true"}}
+	auth := &cliproxyauth.Auth{ID: t.Name(), Provider: "codex", Metadata: map[string]any{"access_token": "test", "plan_type": "plus"}, Attributes: map[string]string{"excel_base_url": server.URL, "base_url": server.URL, "websockets": "true"}}
 	req := cliproxyexecutor.Request{Model: "gpt-5.6-sol-excel", Payload: []byte(`{"input":"hello"}`)}
 	opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse}
 	ctx := cliproxyexecutor.WithDownstreamWebsocket(context.Background())
@@ -263,7 +263,7 @@ func TestExcelEmptyOutputFailsAcrossProtocols(t *testing.T) {
 					fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"empty\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"empty\",\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"name\":\"write_range\",\"arguments\":\"{}\"}]}}\n\n")
 				}))
 				defer server.Close()
-				auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"api_key": "test", "excel_base_url": server.URL}}
+				auth := &cliproxyauth.Auth{Provider: "codex", Metadata: map[string]any{"access_token": "test", "plan_type": "plus"}, Attributes: map[string]string{"excel_base_url": server.URL}}
 				payload := `{"input":"hello"}`
 				if from != sdktranslator.FormatOpenAIResponse {
 					payload = `{"messages":[{"role":"user","content":"hello"}],"max_tokens":100}`
@@ -344,7 +344,7 @@ func TestExcelNativeTerminalFailureReachesManager(t *testing.T) {
 				hook := &excelFailureResultHook{results: make(chan cliproxyauth.Result, 8)}
 				m := cliproxyauth.NewManager(nil, nil, hook)
 				m.RegisterExecutor(NewCodexExecutor(&config.Config{}))
-				auth := &cliproxyauth.Auth{ID: t.Name(), Provider: "codex", Status: cliproxyauth.StatusActive, Attributes: map[string]string{"api_key": "test", "excel_base_url": server.URL}}
+				auth := &cliproxyauth.Auth{ID: t.Name(), Provider: "codex", Status: cliproxyauth.StatusActive, Metadata: map[string]any{"access_token": "test", "plan_type": "plus"}, Attributes: map[string]string{"excel_base_url": server.URL}}
 				if _, err := m.Register(context.Background(), auth); err != nil {
 					t.Fatal(err)
 				}

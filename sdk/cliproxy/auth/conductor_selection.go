@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -75,6 +76,7 @@ type requiredAuthKindContextKey struct{}
 type credentialPolicyContextKey struct{}
 
 type authSelectionEligibility struct {
+	requireExcelOAuth    bool
 	requiredKind         string
 	credentialPolicy     string
 	disallowFreeAuth     bool
@@ -101,12 +103,21 @@ func credentialPolicyFromContext(ctx context.Context) string {
 	return policy
 }
 
-func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecutor.Options) authSelectionEligibility {
+func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecutor.Options, models ...string) authSelectionEligibility {
 	eligibility := authSelectionEligibility{
 		disallowFreeAuth:    disallowFreeAuthFromMetadata(opts.Metadata),
 		privateInstructions: privateInstructionsModeFromMetadata(opts.Metadata),
 		// Default matches codexInstructionsSelectionConfig(nil): require allow flag.
 		requireAuthAllow: true,
+	}
+	for _, model := range models {
+		eligibility.requireExcelOAuth = eligibility.requireExcelOAuth || excel.IsRoute(model)
+	}
+	if requested, ok := opts.Metadata[cliproxyexecutor.RequestedModelMetadataKey].(string); ok {
+		eligibility.requireExcelOAuth = eligibility.requireExcelOAuth || excel.IsRoute(requested)
+	}
+	if required, _ := opts.Metadata[cliproxyexecutor.RequireExcelOAuthMetadataKey].(bool); required {
+		eligibility.requireExcelOAuth = true
 	}
 	if ctx != nil {
 		eligibility.requiredKind, _ = ctx.Value(requiredAuthKindContextKey{}).(string)
@@ -116,8 +127,8 @@ func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecut
 }
 
 // authSelectionEligibilityForManager adds fork Codex private-instructions policy from runtime config.
-func (m *Manager) authSelectionEligibilityForManager(ctx context.Context, opts cliproxyexecutor.Options) authSelectionEligibility {
-	eligibility := authSelectionEligibilityForRequest(ctx, opts)
+func (m *Manager) authSelectionEligibilityForManager(ctx context.Context, opts cliproxyexecutor.Options, models ...string) authSelectionEligibility {
+	eligibility := authSelectionEligibilityForRequest(ctx, opts, models...)
 	eligibility.requireAuthAllow, eligibility.reserveMarkedAuths = codexInstructionsSelectionConfig(m)
 	eligibility.preferFreeCodexAuths = codexPreferFreeForSharedModels(m)
 	return eligibility
@@ -125,6 +136,9 @@ func (m *Manager) authSelectionEligibilityForManager(ctx context.Context, opts c
 
 func (e authSelectionEligibility) allows(auth *Auth) bool {
 	if auth == nil {
+		return false
+	}
+	if e.requireExcelOAuth && !auth.ExcelEligible() {
 		return false
 	}
 	if e.requiredKind != "" && auth.AuthKind() != e.requiredKind {
@@ -1381,7 +1395,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = selectionArgForSelector(m.selector, model)
 
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
-	eligibility := m.authSelectionEligibilityForManager(ctx, opts)
+	eligibility := m.authSelectionEligibilityForManager(ctx, opts, model)
 
 	m.mu.RLock()
 	selector := m.selector
@@ -1635,7 +1649,7 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
 		return m.pickNextLegacy(ctx, provider, model, opts, tried)
 	}
-	eligibility := m.authSelectionEligibilityForManager(ctx, opts)
+	eligibility := m.authSelectionEligibilityForManager(ctx, opts, model)
 	if strings.TrimSpace(model) != "" {
 		m.mu.RLock()
 		targetKey := canonicalSchedulingProvider(provider)
@@ -1696,7 +1710,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = selectionArgForSelector(m.selector, model)
 
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
-	eligibility := m.authSelectionEligibilityForManager(ctx, opts)
+	eligibility := m.authSelectionEligibilityForManager(ctx, opts, model)
 
 	providerSet := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
@@ -1827,7 +1841,7 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 	if len(eligibleProviders) == 0 {
 		return nil, nil, "", &Error{Code: "auth_not_found", Message: "no auth available"}
 	}
-	eligibility := m.authSelectionEligibilityForManager(ctx, opts)
+	eligibility := m.authSelectionEligibilityForManager(ctx, opts, model)
 	if strings.TrimSpace(model) != "" {
 		providerSet := make(map[string]struct{}, len(eligibleProviders))
 		for _, providerKey := range eligibleProviders {

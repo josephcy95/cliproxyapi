@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
@@ -449,7 +450,7 @@ func (s *Service) registerResolvedModelsForAuth(a *coreauth.Auth, providerKey st
 			continue
 		}
 		modelID := strings.TrimSpace(model.ID)
-		if modelID == "" {
+		if modelID == "" || ((excel.IsRoute(modelID) || excel.IsRoute(model.MetadataModelID)) && (providerKey != "codex" || !a.ExcelEligible() || !s.excelModelsConfigured())) {
 			continue
 		}
 		clone := *model
