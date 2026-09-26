@@ -73,6 +73,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		}
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	if errValidate := validateTrustedProxies(cfg.TrustedProxies); errValidate != nil {
+		return nil, errValidate
+	}
 
 	// On normal (non-cloud-standby) loads, backfill any missing keys into the on-disk
 	// config file from the embedded defaults template, then re-parse so runtime matches file.

@@ -312,3 +312,10 @@ func TestParseMarkerIgnoresProseAfterCloseTag(t *testing.T) {
 		t.Fatalf("trailing prose leaked into arguments: %q", call.Arguments)
 	}
 }
+
+func TestCleanInputAcceptsImplicitMessageType(t *testing.T) {
+	input, err := CleanInput([]any{map[string]any{"role": "user", "content": "do not drop this"}})
+	if err != nil || len(input) != 1 {
+		t.Fatalf("valid Responses message lost: %v %v", input, err)
+	}
+}

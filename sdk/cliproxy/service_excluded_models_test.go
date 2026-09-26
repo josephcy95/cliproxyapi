@@ -364,6 +364,9 @@ func TestRegisterModelsForAuth_AntigravityFetchesWebSearchCapability(t *testing.
 	if staticOnlyModel == nil {
 		t.Fatal("expected static-only Antigravity model to remain registered")
 	}
+	if staticOnlyModel.SupportsWebSearch {
+		t.Fatal("gpt-oss-120b-medium should not support web search")
+	}
 	if fetchedOnlyModel != nil {
 		t.Fatalf("fetched-only model should not be registered: %#v", fetchedOnlyModel)
 	}

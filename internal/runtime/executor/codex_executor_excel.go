@@ -17,6 +17,7 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -33,22 +34,26 @@ import (
 // pipeline: that pipeline injects an image-generation tool the backend cannot
 // serve, rewrites instructions and tool schemas, and drops long-id reasoning
 // items, all of which are correct for the public endpoint but wrong here. See
-// internal/excel for the protocol itself.
+// internal/excel for the protocol itself. Client protocol translation still uses
+// the shared registry, before and after this backend-specific adapter.
 
 // excelPlan carries the prepared upstream request.
 type excelPlan struct {
-	url         string
-	body        []byte
-	catalog     *excel.Catalog
-	clientModel string
+	url            string
+	body           []byte
+	catalog        *excel.Catalog
+	clientModel    string
+	responseFormat sdktranslator.Format
+	original       []byte
+	translated     []byte
 }
 
 // executeExcel serves a non-streaming client request from the Excel backend.
-func (e *CodexExecutor) executeExcel(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, baseModel string, stream bool) (resp cliproxyexecutor.Response, err error) {
+func (e *CodexExecutor) executeExcel(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, baseModel string) (resp cliproxyexecutor.Response, err error) {
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 
-	plan, errPlan := e.prepareExcelPlan(auth, req, opts, baseModel)
+	plan, errPlan := e.prepareExcelPlan(ctx, auth, req, opts, baseModel)
 	if errPlan != nil {
 		err = errPlan
 		return resp, err
@@ -81,6 +86,9 @@ func (e *CodexExecutor) executeExcel(ctx context.Context, auth *cliproxyauth.Aut
 		chunk, errRead := reader.ReadBytes('\n')
 		if len(chunk) > 0 {
 			transform.Write(chunk)
+			if transform.Terminal() != nil {
+				break
+			}
 		}
 		if errRead != nil {
 			if errRead != io.EOF {
@@ -103,6 +111,14 @@ func (e *CodexExecutor) executeExcel(ctx context.Context, auth *cliproxyauth.Aut
 		return resp, err
 	}
 	publishExcelUsage(ctx, reporter, payload)
+	terminal, _ := json.Marshal(map[string]any{"type": "response." + fmt.Sprint(payload["status"]), "response": payload})
+	if failure, _, ok := codexTerminalFailureErr(terminal); ok {
+		return resp, failure
+	}
+	if plan.responseFormat != sdktranslator.FormatOpenAIResponse && plan.responseFormat != sdktranslator.FormatCodex {
+		var param any
+		encoded = sdktranslator.TranslateNonStream(ctx, sdktranslator.FormatCodex, plan.responseFormat, plan.clientModel, plan.original, plan.translated, terminal, &param)
+	}
 	resp = cliproxyexecutor.Response{Payload: encoded, Headers: httpResp.Header.Clone()}
 	return resp, nil
 }
@@ -112,7 +128,7 @@ func (e *CodexExecutor) executeExcelStream(ctx context.Context, auth *cliproxyau
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 
-	plan, errPlan := e.prepareExcelPlan(auth, req, opts, baseModel)
+	plan, errPlan := e.prepareExcelPlan(ctx, auth, req, opts, baseModel)
 	if errPlan != nil {
 		err = errPlan
 		return nil, err
@@ -138,6 +154,10 @@ func (e *CodexExecutor) executeExcelStream(ctx context.Context, auth *cliproxyau
 	out := make(chan cliproxyexecutor.StreamChunk)
 	go func() {
 		defer close(out)
+		// The outer function has returned by now, so it cannot track errors
+		// from this goroutine. Keep the stream outcome local to avoid a race.
+		var streamErr error
+		defer reporter.TrackFailure(ctx, &streamErr)
 		defer func() {
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("codex excel: close response body error: %v", errClose)
@@ -145,46 +165,87 @@ func (e *CodexExecutor) executeExcelStream(ctx context.Context, auth *cliproxyau
 		}()
 
 		transform := excel.NewTransform(plan.catalog, plan.clientModel)
+		var param any
+		forward := func(events [][]byte) bool {
+			// Account before exposing completion: the client may disconnect as
+			// soon as it receives the terminal frame, and EOF may never arrive.
+			if payload := transform.Terminal(); payload != nil {
+				publishExcelUsage(ctx, reporter, payload)
+			}
+			for _, event := range events {
+				// Native Responses frames must also reach conductor failure accounting.
+				// A failed payload alone is otherwise recorded as a successful stream.
+				for _, line := range bytes.Split(event, []byte("\n")) {
+					if !bytes.HasPrefix(line, []byte("data:")) {
+						continue
+					}
+					if failure, _, ok := codexTerminalFailureErr(bytes.TrimSpace(line[5:])); ok {
+						streamErr = failure
+						select {
+						case out <- cliproxyexecutor.StreamChunk{Err: failure}:
+						case <-ctx.Done():
+						}
+						return false
+					}
+				}
+				chunks := [][]byte{event}
+				if plan.responseFormat != sdktranslator.FormatOpenAIResponse && plan.responseFormat != sdktranslator.FormatCodex {
+					chunks = nil
+					// Transform emits complete SSE frames; shared translators consume data lines.
+					for _, line := range bytes.Split(event, []byte("\n")) {
+						if !bytes.HasPrefix(line, []byte("data:")) {
+							continue
+						}
+						chunks = append(chunks, sdktranslator.TranslateStream(ctx, sdktranslator.FormatCodex, plan.responseFormat, plan.clientModel, plan.original, plan.translated, line, &param)...)
+					}
+				}
+				for _, chunk := range chunks {
+					select {
+					case out <- cliproxyexecutor.StreamChunk{Payload: chunk}:
+					case <-ctx.Done():
+						streamErr = ctx.Err()
+						return false
+					}
+				}
+			}
+			return true
+		}
 		reader := bufio.NewReaderSize(httpResp.Body, 64*1024)
 		for {
 			chunk, errRead := reader.ReadBytes('\n')
 			if len(chunk) > 0 {
-				for _, event := range transform.Write(chunk) {
-					select {
-					case out <- cliproxyexecutor.StreamChunk{Payload: event}:
-					case <-ctx.Done():
-						return
-					}
+				if !forward(transform.Write(chunk)) {
+					return
+				}
+				if transform.Terminal() != nil {
+					return
 				}
 			}
-			if errRead != nil {
-				if errRead == io.EOF {
-					break
-				}
-				select {
-				case out <- cliproxyexecutor.StreamChunk{Err: errRead}:
-				case <-ctx.Done():
-				}
-				return
+			if errRead == nil {
+				continue
 			}
-		}
-		for _, event := range transform.Close() {
+			if errRead == io.EOF {
+				if !forward(transform.Close()) || transform.Terminal() != nil {
+					return
+				}
+				streamErr = newCodexIncompleteStreamError()
+			} else {
+				streamErr = errRead
+			}
+			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+			reporter.PublishFailure(ctx, streamErr)
 			select {
-			case out <- cliproxyexecutor.StreamChunk{Payload: event}:
+			case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
 			case <-ctx.Done():
-				return
 			}
+			return
 		}
-		if payload := transform.Terminal(); payload != nil {
-			publishExcelUsage(ctx, reporter, payload)
-		}
-		reporter.EnsurePublished(ctx)
 	}()
 	return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: out}, nil
 }
 
 // prepareExcelPlan parses the client payload and builds the add-in shaped request.
-func (e *CodexExecutor) prepareExcelPlan(auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, baseModel string) (*excelPlan, error) {
+func (e *CodexExecutor) prepareExcelPlan(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, baseModel string) (*excelPlan, error) {
 	if opts.Alt == "responses/compact" {
 		return nil, statusErr{code: http.StatusBadRequest, msg: "codex executor: /responses/compact is not supported for Excel-backed models"}
 	}
@@ -193,19 +254,56 @@ func (e *CodexExecutor) prepareExcelPlan(auth *cliproxyauth.Auth, req cliproxyex
 		clientModel = baseModel
 	}
 
-	var decoded map[string]any
-	if errUnmarshal := json.Unmarshal(req.Payload, &decoded); errUnmarshal != nil {
-		return nil, statusErr{code: http.StatusBadRequest, msg: fmt.Sprintf("codex executor: invalid request payload: %v", errUnmarshal)}
+	// Responses callers must bypass public-Codex normalizers to preserve their
+	// custom tool schemas and Excel-specific reasoning items.
+	from := opts.SourceFormat
+	if from == "" {
+		from = req.Format
 	}
-	// The route speaks the add-in's Responses dialect and no other translator
-	// targets it, so a caller speaking another protocol would otherwise be handed
-	// a confusing parse failure.
-	if _, hasInput := decoded["input"]; !hasInput {
-		return nil, statusErr{
-			code: http.StatusBadRequest,
-			msg:  "codex executor: Excel-backed models require the OpenAI Responses API (/v1/responses); other client protocols are not supported",
+	if from == "" {
+		from = sdktranslator.FormatOpenAIResponse
+	}
+	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
+	if responseFormat == "" {
+		responseFormat = from
+	}
+	original := opts.OriginalRequest
+	if len(original) == 0 {
+		original = req.Payload
+	}
+	if !json.Valid(req.Payload) {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "codex excel: invalid request JSON"}
+	}
+	body := req.Payload
+	originalTranslated := original
+	if from != sdktranslator.FormatOpenAIResponse && from != sdktranslator.FormatCodex {
+		if !sdktranslator.HasRequestTransformer(from, sdktranslator.FormatCodex) {
+			return nil, statusErr{code: http.StatusBadRequest, msg: fmt.Sprintf("codex excel: unsupported request format %q", from)}
 		}
+		originalTranslated, body = translateCodexRequestPair(from, sdktranslator.FormatCodex, baseModel, original, body, true)
 	}
+	if responseFormat != sdktranslator.FormatOpenAIResponse && responseFormat != sdktranslator.FormatCodex &&
+		(!sdktranslator.HasStreamResponseTransformer(responseFormat, sdktranslator.FormatCodex) || !sdktranslator.HasNonStreamResponseTransformer(responseFormat, sdktranslator.FormatCodex)) {
+		return nil, statusErr{code: http.StatusBadRequest, msg: fmt.Sprintf("codex excel: unsupported response format %q", responseFormat)}
+	}
+	var errThinking error
+	body, errThinking = helps.ApplyRequestThinking(body, req, opts, from.String(), sdktranslator.FormatCodex.String(), e.Identifier())
+	if errThinking != nil {
+		return nil, errThinking
+	}
+	body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, sdktranslator.FormatCodex.String(), from.String(), "", body, originalTranslated, helps.PayloadRequestedModel(opts, req.Model), helps.PayloadRequestPath(opts), opts.Headers)
+	body = applyCodexConfiguredInstructions(e.cfg, auth, baseModel, body, opts)
+	var decoded map[string]any
+	if errUnmarshal := json.Unmarshal(body, &decoded); errUnmarshal != nil || decoded == nil {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "codex excel: expected a request object"}
+	}
+	if _, hasInput := decoded["input"]; !hasInput {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "codex excel: translated request is missing input"}
+	}
+	// Routing has already resolved aliases and reasoning suffixes.
+	decoded["model"] = baseModel
+	decoded["stream"] = true
+	body, _ = json.Marshal(decoded)
 
 	var catalog *excel.Catalog
 	if !excel.ToolChoiceDisabled(decoded) {
@@ -229,10 +327,13 @@ func (e *CodexExecutor) prepareExcelPlan(auth *cliproxyauth.Auth, req cliproxyex
 		baseURL = excel.DefaultBaseURL
 	}
 	return &excelPlan{
-		url:         strings.TrimSuffix(baseURL, "/") + excel.ResponsesPath,
-		body:        encoded,
-		catalog:     catalog,
-		clientModel: clientModel,
+		url:            strings.TrimSuffix(baseURL, "/") + excel.ResponsesPath,
+		body:           encoded,
+		catalog:        catalog,
+		clientModel:    clientModel,
+		responseFormat: responseFormat,
+		original:       original,
+		translated:     body,
 	}, nil
 }
 
@@ -329,10 +430,8 @@ func excelErrorMessage(status int, body []byte) string {
 // publishExcelUsage forwards the backend's token accounting to the usage
 // reporter, so these turns are counted like any other model's.
 func publishExcelUsage(ctx context.Context, reporter *helps.UsageReporter, payload map[string]any) {
-	rawUsage, okUsage := payload["usage"].(map[string]any)
-	if !okUsage {
-		return
-	}
+	// Missing token usage must not suppress request counting.
+	rawUsage, _ := payload["usage"].(map[string]any)
 	detail := usage.Detail{}
 	if value, okValue := rawUsage["input_tokens"].(float64); okValue {
 		detail.InputTokens = int64(value)
@@ -351,6 +450,17 @@ func publishExcelUsage(ctx context.Context, reporter *helps.UsageReporter, paylo
 	if details, okDetails := rawUsage["output_tokens_details"].(map[string]any); okDetails {
 		if value, okValue := details["reasoning_tokens"].(float64); okValue {
 			detail.ReasoningTokens = int64(value)
+		}
+	}
+	if payload["status"] == "failed" {
+		encoded, errMarshal := json.Marshal(map[string]any{"type": "response.failed", "response": payload})
+		if errMarshal != nil {
+			reporter.PublishFailureWithDetail(ctx, detail, errMarshal)
+			return
+		}
+		if failure, _, ok := codexTerminalFailureErr(encoded); ok {
+			reporter.PublishFailureWithDetail(ctx, detail, failure)
+			return
 		}
 	}
 	reporter.Publish(ctx, detail)

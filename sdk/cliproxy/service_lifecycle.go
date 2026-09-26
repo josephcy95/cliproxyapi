@@ -57,11 +57,11 @@ func (s *Service) Run(ctx context.Context) error {
 		redisqueue.SetUsageStatisticsEnabled(true)
 	}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
 	defer func() {
-		if err := s.Shutdown(shutdownCtx); err != nil {
-			log.Errorf("service shutdown returned error: %v", err)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutdownCancel()
+		if errShutdown := s.Shutdown(shutdownCtx); errShutdown != nil {
+			log.Errorf("service shutdown returned error: %v", errShutdown)
 		}
 	}()
 
@@ -328,10 +328,10 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		if s.server != nil {
 			shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			if err := s.server.Stop(shutdownCtx); err != nil {
-				log.Errorf("error stopping API server: %v", err)
+			if errStop := s.server.Stop(shutdownCtx); errStop != nil {
+				log.Errorf("error stopping API server: %v", errStop)
 				if shutdownErr == nil {
-					shutdownErr = err
+					shutdownErr = errStop
 				}
 			}
 		}

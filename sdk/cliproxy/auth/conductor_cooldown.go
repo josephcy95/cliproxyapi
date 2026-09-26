@@ -960,8 +960,13 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 						state.Status = StatusActive
 						state.NextRetryAfter = time.Time{}
 					} else if isModelSupportResultError(result.Error) {
-						next := now.Add(12 * time.Hour)
-						state.NextRetryAfter = next
+						if disableCooling {
+							state.NextRetryAfter = time.Time{}
+						} else if result.RetryAfter != nil && *result.RetryAfter > 0 {
+							state.NextRetryAfter = now.Add(*result.RetryAfter)
+						} else {
+							state.NextRetryAfter = now.Add(12 * time.Hour)
+						}
 						suspendReason = "model_not_supported"
 						shouldSuspendModel = true
 					} else if isCloudflareChallengeResultError(result.Error) {
@@ -1012,6 +1017,8 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 						case 404:
 							if disableCooling {
 								state.NextRetryAfter = time.Time{}
+							} else if result.RetryAfter != nil && *result.RetryAfter > 0 {
+								state.NextRetryAfter = now.Add(*result.RetryAfter)
 							} else {
 								next := now.Add(12 * time.Hour)
 								state.NextRetryAfter = next
@@ -1020,7 +1027,14 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 							}
 						case 429:
 							var next time.Time
+							var credentialNext time.Time
 							backoffLevel := state.Quota.BackoffLevel
+							if result.CredentialScope {
+								backoffLevel = 0
+								if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" {
+									backoffLevel = auth.Quota.BackoffLevel
+								}
+							}
 							if !disableCooling {
 								if effectiveRetryAfter != nil {
 									cooldown := *effectiveRetryAfter
@@ -1029,8 +1043,18 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 									}
 									next = now.Add(cooldown).Round(0)
 								} else {
-									next, backoffLevel = quotaCooldownAfterFailure(state.Quota, now)
+									quotaForFailure := state.Quota
+									if result.CredentialScope {
+										if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" {
+											quotaForFailure = auth.Quota
+										} else {
+											quotaForFailure.NextRecoverAt = time.Time{}
+											quotaForFailure.BackoffLevel = 0
+										}
+									}
+									next, backoffLevel = quotaCooldownAfterFailure(quotaForFailure, now)
 								}
+								credentialNext = next
 								if state.Quota.Exceeded && state.Quota.NextRecoverAt.After(next) {
 									next = state.Quota.NextRecoverAt
 								}
@@ -1052,27 +1076,33 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 									if otherState != nil && otherState != state {
 										otherState.Unavailable = true
 										otherState.Status = StatusError
-										otherNext := next
-										if otherState.Quota.Exceeded && otherState.Quota.NextRecoverAt.After(otherNext) {
-											otherNext = otherState.Quota.NextRecoverAt
+										otherQuotaNext := credentialNext
+										if otherState.Quota.Exceeded && otherState.Quota.NextRecoverAt.After(otherQuotaNext) {
+											otherQuotaNext = otherState.Quota.NextRecoverAt
+										}
+										otherNext := otherQuotaNext
+										if otherState.NextRetryAfter.After(otherNext) {
+											otherNext = otherState.NextRetryAfter
 										}
 										otherState.NextRetryAfter = otherNext
 										applyCooldownFields(&otherState.Quota, QuotaState{
 											Exceeded:      true,
 											Reason:        "credential_quota",
-											NextRecoverAt: otherNext,
+											NextRecoverAt: otherQuotaNext,
 											BackoffLevel:  backoffLevel,
 										})
 									}
 								}
 								auth.Unavailable = true
-								auth.Quota.Exceeded = true
-								auth.Quota.Reason = "credential_quota"
-								authNext := next
-								if auth.Quota.NextRecoverAt.After(authNext) {
+								authNext := credentialNext
+								if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" &&
+									auth.Quota.NextRecoverAt.After(authNext) {
 									authNext = auth.Quota.NextRecoverAt
 								}
+								auth.Quota.Exceeded = true
+								auth.Quota.Reason = "credential_quota"
 								auth.Quota.NextRecoverAt = authNext
+								auth.Quota.BackoffLevel = backoffLevel
 								auth.NextRetryAfter = authNext
 							}
 						case 408, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526:
@@ -2296,6 +2326,8 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		auth.StatusMessage = "not_found"
 		if disableCooling {
 			auth.NextRetryAfter = time.Time{}
+		} else if retryAfter != nil && *retryAfter > 0 {
+			auth.NextRetryAfter = now.Add(*retryAfter)
 		} else {
 			auth.NextRetryAfter = now.Add(12 * time.Hour)
 		}

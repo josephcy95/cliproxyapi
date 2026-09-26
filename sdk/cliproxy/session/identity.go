@@ -218,6 +218,7 @@ func DerivedID(metadata map[string]any) string {
 }
 
 // Enrich derives a session identity once and places it in both request and option metadata.
+// Preserve an independent original-request snapshot for fork selection and plugin hooks.
 func Enrich(req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Request, cliproxyexecutor.Options) {
 	payload := opts.OriginalRequest
 	if len(payload) == 0 && len(req.Payload) > 0 {
@@ -376,12 +377,12 @@ func hasExplicitSession(headers map[string][]string, payload []byte) bool {
 	}
 	// Parsing without copying matters here: this runs on every request and the
 	// payload can be multiple megabytes.
-	root := util.ParseGJSONBytesNoCopy(payload)
+	root := newSessionObject(util.ParseGJSONBytesNoCopy(payload))
 	reqRoot := root
 	req := root.Get("request")
 	hasNestedReq := req.Exists() && !root.Get("contents").Exists()
 	if hasNestedReq {
-		reqRoot = req
+		reqRoot = newSessionObject(req)
 	}
 	for _, path := range []string{
 		"session_id",

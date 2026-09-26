@@ -379,13 +379,13 @@ func TestTransformTerminalEventEnvelope(t *testing.T) {
 	}
 }
 
-func TestTransformEmptyTurnIsExplained(t *testing.T) {
+func TestTransformEmptyTurnIsRejected(t *testing.T) {
 	catalog := ParseCatalog([]any{map[string]any{"type": "function", "name": "exec_command"}})
 	transform := NewTransform(catalog, "gpt-5.6-sol-excel")
 
 	// The model reached for a backend tool whose call this route discards, so the
-	// turn carries no text and no relayed call. Returning nothing would look like
-	// a hung agent, so the turn must explain itself instead.
+	// turn carries no text and no relayed call. It must fail rather than claim
+	// the agent completed its work successfully.
 	var builder strings.Builder
 	builder.WriteString("event: response.created\ndata: " + `{"type":"response.created","response":{"id":"resp_3","model":"gpt-5.6-sol","status":"in_progress"}}` + "\n\n")
 	builder.WriteString("event: response.output_item.added\ndata: " + `{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_9","type":"function_call","name":"request_user_input_basispoints","call_id":"call_9","arguments":""}}` + "\n\n")
@@ -399,11 +399,11 @@ func TestTransformEmptyTurnIsExplained(t *testing.T) {
 	if strings.Contains(joined, "request_user_input_basispoints") || strings.Contains(joined, "which sheet") {
 		t.Fatalf("a discarded backend tool call reached the client:\n%s", joined)
 	}
-	if !strings.Contains(joined, "did not return an answer") {
+	if !strings.Contains(joined, "excel_no_usable_output") {
 		t.Fatalf("an empty turn must explain itself, got events: %v", eventTypes(events))
 	}
-	if terminal := transform.Terminal(); terminal == nil || terminal["status"] != "completed" {
-		t.Fatalf("terminal payload must stay completed: %v", terminal)
+	if terminal := transform.Terminal(); terminal == nil || terminal["status"] != "failed" {
+		t.Fatalf("empty terminal must fail: %v", terminal)
 	}
 }
 
@@ -413,5 +413,58 @@ func TestTransformNormalAnswerIsNotGivenTheEmptyNotice(t *testing.T) {
 	events := feed(t, transform, upstreamTextStream("Here is the answer.", false), 6)
 	if strings.Contains(strings.Join(events, ""), "did not return an answer") {
 		t.Fatal("a normal answer must not be replaced by the empty-turn notice")
+	}
+}
+
+func TestTransformFlushesTerminalWithoutBlankLine(t *testing.T) {
+	transform := NewTransform(&Catalog{}, "gpt-5.6-sol-excel")
+	stream := strings.TrimRight(upstreamTextStream("complete answer", false), "\n")
+	events := feed(t, transform, stream, 7)
+	if transform.Terminal() == nil || !containsType(eventTypes(events), "response.completed") {
+		t.Fatalf("lost final SSE event at EOF: %v", eventTypes(events))
+	}
+}
+
+func TestTransformTerminalOnlyPreservesAnswer(t *testing.T) {
+	transform := NewTransform(&Catalog{}, "gpt-5.6-sol-excel")
+	stream := "data: " + mustJSON(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "actual answer"}}}}}}) + "\n\n"
+	events := feed(t, transform, stream, 11)
+	if got := responseText(transform.Terminal()); got != "actual answer" {
+		t.Fatalf("terminal-only answer replaced: %q; events=%v", got, events)
+	}
+	if !strings.Contains(strings.Join(events, ""), `"delta":"actual answer"`) {
+		t.Fatal("terminal-only answer not emitted to streaming clients")
+	}
+}
+
+func TestTransformNamespacedCallPreservesNamespace(t *testing.T) {
+	catalog := ParseCatalog([]any{map[string]any{"type": "namespace", "name": "browser", "tools": []any{map[string]any{"type": "function", "name": "open"}}}})
+	transform := NewTransform(catalog, "gpt-5.6-sol-excel")
+	events := feed(t, transform, upstreamTextStream(`<codex_tool_call>{"name":"browser.open","arguments":{"url":"test"}}</codex_tool_call>`, false), 7)
+	call := findFunctionCall(t, events)
+	if call["namespace"] != "browser" || call["name"] != "open" {
+		t.Fatalf("lost namespace: %v", call)
+	}
+}
+
+func TestTransformEmptyCompletionIsFailureNotSuccess(t *testing.T) {
+	transform := NewTransform(&Catalog{}, "gpt-5.6-sol-excel")
+	events := feed(t, transform, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"empty\",\"status\":\"completed\",\"output\":[]}}\n\n", 7)
+	if containsType(eventTypes(events), "response.completed") || !containsType(eventTypes(events), "response.failed") {
+		t.Fatalf("empty output must not silently end the client's agent loop successfully: %v", eventTypes(events))
+	}
+	if transform.Terminal()["status"] != "failed" {
+		t.Fatal(transform.Terminal())
+	}
+}
+
+func TestTransformTerminalOnlyHasCompleteMessageLifecycle(t *testing.T) {
+	transform := NewTransform(&Catalog{}, "gpt-5.6-sol-excel")
+	terminal := map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "terminal answer"}}}}}}
+	events := feed(t, transform, "data: "+mustJSON(terminal)+"\n\n", 8)
+	for _, want := range []string{"response.output_item.added", "response.content_part.added", "response.output_text.delta", "response.output_text.done", "response.content_part.done", "response.output_item.done", "response.completed"} {
+		if !containsType(eventTypes(events), want) {
+			t.Errorf("missing %s: %v", want, eventTypes(events))
+		}
 	}
 }
