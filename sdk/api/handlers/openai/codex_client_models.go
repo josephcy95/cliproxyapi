@@ -3,10 +3,10 @@ package openai
 import (
 	"strings"
 
-	codexmodels "github.com/router-for-me/CLIProxyAPI/v7/internal/client/codex/models"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/codexinstructions"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
+	codexmodels "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/models"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexinstructions"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 )
 
 func (h *OpenAIAPIHandler) codexClientModelsResponse(clientVersion ...string) map[string]any {

@@ -13,10 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	qoderauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/qoder"
-	qodercnauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/qodercn"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	qoderauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/qoder"
+	qodercnauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/qodercn"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
 // PluginAuthParser parses auth JSON owned by plugin providers.

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/usagestore"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestore"
 )
 
 // SetUsageStore attaches the durable usage store used by monitoring endpoints.

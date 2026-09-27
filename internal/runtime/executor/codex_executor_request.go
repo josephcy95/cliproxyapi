@@ -10,15 +10,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -33,20 +33,27 @@ const (
 var dataTag = []byte("data:")
 
 func translateCodexRequestPair(from, to sdktranslator.Format, model string, originalPayload, payload []byte, stream bool, preserveEmptyThinkingBlocks ...bool) ([]byte, []byte) {
+	original, body, _ := translateCodexRequestPairWithUpdateIntent(from, to, model, originalPayload, payload, stream, preserveEmptyThinkingBlocks...)
+	return original, body
+}
+
+func translateCodexRequestPairWithUpdateIntent(from, to sdktranslator.Format, model string, originalPayload, payload []byte, stream bool, preserveEmptyThinkingBlocks ...bool) ([]byte, []byte, bool) {
 	isCompat := len(preserveEmptyThinkingBlocks) > 0 && preserveEmptyThinkingBlocks[0]
-	translate := func(raw []byte) []byte {
+	ctx := context.Background()
+	translate := func(raw []byte) ([]byte, bool) {
 		if isCompat && from == sdktranslator.FormatClaude && to == sdktranslator.FormatCodex {
-			return helps.TranslateRequestWithAPIKeyModelCompatibility(context.Background(), nil, nil, from, to, model, raw, stream, true)
+			return helps.TranslateRequestWithAPIKeyModelCompatibility(ctx, nil, nil, from, to, model, raw, stream, true), false
 		}
-		return sdktranslator.TranslateRequest(from, to, model, raw, stream)
+		translated := sdktranslator.TranslateRequestEnvelope(ctx, from, to, sdktranslator.RequestEnvelope{Format: from, Model: model, Stream: stream, Body: raw})
+		return translated.Body, translated.ConfigurationUpdatesChanged
 	}
 	if bytes.Equal(originalPayload, payload) {
-		body := translate(payload)
-		return body, body
+		body, changed := translate(payload)
+		return body, body, changed
 	}
-	originalTranslated := translate(originalPayload)
-	body := translate(payload)
-	return originalTranslated, body
+	originalTranslated, _ := translate(originalPayload)
+	body, changed := translate(payload)
+	return originalTranslated, body, changed
 }
 
 // PrepareRequest injects Codex credentials into the outgoing HTTP request.
@@ -423,6 +430,9 @@ func codexOperatorHeaderValue(ctx context.Context, auth *cliproxyauth.Auth, clie
 }
 
 func isCodexCloakingDisabled(cfg *config.Config, auth *cliproxyauth.Auth) bool {
+	if auth != nil && auth.AuthKind() == cliproxyauth.AuthKindAPIKey {
+		cfg = cfg.ForAPIKey()
+	}
 	if auth != nil && len(auth.Attributes) > 0 {
 		if val, ok := auth.Attributes[cliproxyauth.AttributeCodexDisableCloaking]; ok {
 			if parsed, errParse := strconv.ParseBool(strings.TrimSpace(val)); errParse == nil {

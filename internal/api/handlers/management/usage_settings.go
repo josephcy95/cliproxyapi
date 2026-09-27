@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/usagestore"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestore"
 )
 
 // GetUsageRetentionDays reports the configured and active cleanup policy.

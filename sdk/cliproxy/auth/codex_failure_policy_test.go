@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
 func usageLimitResult(authID, model string, retryAfter time.Duration) Result {

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 )
 
 func formatUnixSeconds(value time.Time) string {

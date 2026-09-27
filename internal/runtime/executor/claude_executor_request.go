@@ -18,14 +18,14 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
-	claudeauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/claude"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/buildinfo"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	claudeauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -1093,9 +1093,8 @@ func applyClaudeHeadersWithNativeProfile(
 	useAPIKey := !credentialUsesBearer
 	fp := resolveClaudeFingerprintPolicy(cfg, auth, apiKey)
 	wirePolicy, _ := resolveClaudeWirePolicy(cfg, auth, apiKey, confirmedClaudeCode)
-	messagesPassthrough := !confirmedClaudeCode && claudeInboundMessagesPassthrough(r.Context()) && wirePolicy.OAuth && !wirePolicy.CloakConfigured
-	applyCLIFingerprint := !messagesPassthrough && (fp.ProfileClaudeCodeCLI || wirePolicy.Cloak)
-	preserveCallerFingerprint := messagesPassthrough || (!applyCLIFingerprint && !confirmedClaudeCode)
+	applyCLIFingerprint := fp.ProfileClaudeCodeCLI || wirePolicy.Cloak
+	preserveCallerFingerprint := !applyCLIFingerprint && !confirmedClaudeCode
 	useOAuthBetas := fp.UseOAuthBetas
 	isAnthropicBase := isAnthropicUpstreamURL(r.URL)
 	if strings.TrimSpace(apiKey) != "" {
@@ -1168,7 +1167,7 @@ func applyClaudeHeadersWithNativeProfile(
 			baseBetas = withClaudeOAuthCredentialBetas(baseBetas, false)
 		}
 	}
-	if preserveCallerFingerprint && !messagesPassthrough && advisorNeeded {
+	if preserveCallerFingerprint && advisorNeeded {
 		baseBetas = withClaudeAdvisorToolBeta(baseBetas)
 	}
 	if !claudeRequestSupportsEffort(body, nil) {
@@ -1194,9 +1193,8 @@ func applyClaudeHeadersWithNativeProfile(
 	}
 	if preserveCallerFingerprint {
 		// Caller-owned mode preserves both header and body-lifted betas verbatim.
-		// The explicit speed=fast request still needs its protocol beta unless a
-		// direct Messages caller owns the complete beta set.
-		if !messagesPassthrough && strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "speed").String()), "fast") {
+		// The explicit speed=fast request still needs its protocol beta.
+		if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "speed").String()), "fast") {
 			appendBeta(claudeFastModeBeta)
 		}
 		for _, beta := range extraBetas {
@@ -1230,14 +1228,6 @@ func applyClaudeHeadersWithNativeProfile(
 		}
 	}
 	applyBetaHeader := func() {
-		if messagesPassthrough {
-			if strings.TrimSpace(baseBetas) == "" {
-				r.Header.Del("Anthropic-Beta")
-			} else {
-				r.Header.Set("Anthropic-Beta", baseBetas)
-			}
-			return
-		}
 		// Enforce strict native Claude Code 2.1.280 model & turn beta gating:
 		if !claudeRequestSupportsEffort(body, nil) {
 			baseBetas = withoutClaudeBeta(baseBetas, claudeEffortBeta)

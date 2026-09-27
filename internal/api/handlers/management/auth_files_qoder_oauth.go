@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	qoderauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/qoder"
-	qodercnauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/qodercn"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	qoderauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/qoder"
+	qodercnauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/qodercn"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 )
 

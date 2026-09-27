@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/tidwall/gjson"
 )
 
@@ -246,6 +246,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 	if executor == nil {
 		return nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
 	}
+	executor = executorForAuth(executor, auth)
 	ctx = contextWithRequestedModelAlias(ctx, opts, routeModel)
 	var lastErr error
 	didRefreshOnUnauthorized := false
@@ -267,10 +268,10 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			m.releaseCodexAdaptiveLease(opts)
 			return nil, errIntercept
 		}
+		execReq = attachResolvedExecutionModelInfo(routing, execReq, auth, routeModel, execModel, executionModel != "")
 		if executionModel == "" {
-			execReq = attachResolvedAPIKeyModelInfo(routing, execReq, auth, routeModel, execModel)
 			if selection, ok := opts.ExecutionLifecycle.(*HomeDispatchSelection); ok && selection != nil {
-				execReq = attachResolvedHomeModelInfo(execReq, selection.modelInfo)
+				execReq = attachResolvedHomeModelInfo(execReq, selection.modelInfo, selection.configurationUpdateSupport)
 			}
 		}
 		if errCtx := ctx.Err(); errCtx != nil {

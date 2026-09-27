@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
-	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
 // Plugin persists usage records into a Store when enabled.

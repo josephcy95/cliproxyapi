@@ -11,11 +11,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	"github.com/tidwall/gjson"
 )
 
@@ -364,8 +364,8 @@ func TestClaudeExecutor_Native280HaikuTitleHelperPreservesServerSideFallbackBeta
 	})
 	ctx := context.WithValue(context.Background(), "cliproxy.roundtripper", http.RoundTripper(transport))
 	const titleBetas = claudeNativeHelperCoreBetas + ",structured-outputs-2025-12-15,server-side-fallback-2026-06-01,fallback-credit-2026-06-01,cache-diagnosis-2026-04-07"
-	headers := claudeNativeHelperHeaders(titleBetas, "gzip")
-	payload := []byte(fmt.Sprintf(`{"model":"claude-haiku-4-5-20251001","max_tokens":80,"messages":[{"role":"user","content":"generate title"}],"metadata":{"user_id":%s},"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}}}`, claudeNativeHelperUserID))
+	headers := claudeNativeHelperHeaders(titleBetas, "gzip, deflate, br, zstd")
+	payload := []byte(`{"model":"claude-haiku-4-5-20251001","max_tokens":80,"messages":[{"role":"user","content":"generate title"}],"metadata":{"user_id":"` + strings.ReplaceAll(claudeNativeHelperUserID, `"`, `\"`) + `"},"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}}}`)
 
 	_, err := NewClaudeExecutor(&config.Config{}).Execute(ctx, claudeNativeHelperOAuthAuth("https://api.anthropic.com"), cliproxyexecutor.Request{
 		Model:   "claude-haiku-4-5-20251001",

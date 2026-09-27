@@ -77,27 +77,6 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		return nil, errValidate
 	}
 
-	// On normal (non-cloud-standby) loads, backfill any missing keys into the on-disk
-	// config file from the embedded defaults template, then re-parse so runtime matches file.
-	if !optional {
-		if changed, errEnsure := ensureMissingConfigKeysOnDisk(configFile, data); errEnsure != nil {
-			log.WithError(errEnsure).Warn("failed to backfill missing config keys")
-		} else if changed {
-			if refreshed, errRead := os.ReadFile(configFile); errRead != nil {
-				log.WithError(errRead).Warn("failed to re-read config after backfill")
-			} else {
-				var refreshedCfg Config
-				applyBuiltinPreUnmarshalDefaults(&refreshedCfg)
-				if errUnmarshal := yaml.Unmarshal(refreshed, &refreshedCfg); errUnmarshal != nil {
-					log.WithError(errUnmarshal).Warn("failed to re-parse config after backfill")
-				} else {
-					cfg = refreshedCfg
-					data = refreshed
-				}
-			}
-		}
-	}
-
 	cfg.CredentialConcurrency = cfg.CredentialConcurrency.WithDefaults()
 	if errValidate := cfg.CredentialInFlight.Validate(); errValidate != nil {
 		return nil, errValidate
@@ -126,7 +105,12 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 		// Persist the hashed value back to the config file to avoid re-hashing on next startup.
 		// Preserve YAML comments and ordering; update only the nested key.
-		_ = SaveConfigPreserveCommentsUpdateNestedScalar(configFile, []string{"remote-management", "secret-key"}, hashed)
+		secretPath := []string{"remote-management", "secret-key"}
+		var source yaml.Node
+		if yaml.Unmarshal(data, &source) == nil && len(source.Content) > 0 && yamlPath(expandConfigAliases(source.Content[0]), "management.secret-key") != nil {
+			secretPath[0] = "management"
+		}
+		_ = SaveConfigPreserveCommentsUpdateNestedScalar(configFile, secretPath, hashed)
 	}
 
 	cfg.RemoteManagement.PanelGitHubRepository = strings.TrimSpace(cfg.RemoteManagement.PanelGitHubRepository)
@@ -211,6 +195,22 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
+
+	// Only conflicting legacy fields are removed on load. A legacy-only document
+	// stays legacy until a v8 configuration write explicitly migrates it.
+	current, errRead := os.ReadFile(configFile)
+	if errRead != nil {
+		return nil, errRead
+	}
+	cleaned, changed, errLayout := NormalizeConfigLayout(current, false)
+	if errLayout != nil {
+		return nil, errLayout
+	}
+	if changed {
+		if errWrite := os.WriteFile(configFile, cleaned, 0600); errWrite != nil {
+			return nil, fmt.Errorf("clean conflicting config fields: %w", errWrite)
+		}
+	}
 
 	// Return the populated configuration struct.
 	return &cfg, nil

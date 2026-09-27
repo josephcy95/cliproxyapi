@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	qodercnauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/qodercn"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	qodercnauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/qodercn"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
 func TestNewFileSynthesizer(t *testing.T) {

@@ -3,7 +3,7 @@ package auth
 import (
 	"strings"
 
-	codexauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
+	codexauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 )
 
 // ExcelEligible authorizes the temporary Excel routes, not ordinary Codex models.

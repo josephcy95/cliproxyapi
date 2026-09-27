@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/codexinstructions"
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexinstructions"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
 func privateInstructionsModeFromMetadata(meta map[string]any) bool {

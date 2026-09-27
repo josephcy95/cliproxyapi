@@ -16,12 +16,12 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 var quotaCooldownDisabled atomic.Bool
@@ -1786,6 +1786,25 @@ func HasUnauthorizedAuthFailure(auth *Auth) bool {
 	return hasUnauthorizedAuthFailure(auth)
 }
 
+func hasDisabledInvalidGrantFailure(auth *Auth) bool {
+	if auth == nil {
+		return false
+	}
+	isDisabled := auth.Disabled || auth.Status == StatusDisabled
+	if !isDisabled {
+		return false
+	}
+	if auth.LastError != nil && (isInvalidGrantResultError(auth.LastError) || isInvalidGrantErrorMessage(auth.LastError.Message) || isInvalidGrantErrorMessage(auth.LastError.Code)) {
+		return true
+	}
+	return false
+}
+
+// HasDisabledInvalidGrantFailure reports whether the auth is disabled and has encountered an invalid_grant error.
+func HasDisabledInvalidGrantFailure(auth *Auth) bool {
+	return hasDisabledInvalidGrantFailure(auth)
+}
+
 func refreshErrorFromError(err error) *Error {
 	if err == nil {
 		return nil
@@ -1883,22 +1902,28 @@ func isInvalidGrantError(err error) bool {
 	if err == nil {
 		return false
 	}
-	status := statusCodeFromError(err)
-	if status != http.StatusBadRequest && status != http.StatusUnauthorized {
+	if !isInvalidGrantErrorMessage(err.Error()) {
 		return false
 	}
-	return isInvalidGrantErrorMessage(err.Error())
+	status := statusCodeFromError(err)
+	if status == http.StatusBadRequest || status == http.StatusUnauthorized || status == 0 {
+		return true
+	}
+	return false
 }
 
 func isInvalidGrantResultError(err *Error) bool {
 	if err == nil {
 		return false
 	}
-	status := statusCodeFromResult(err)
-	if status != http.StatusBadRequest && status != http.StatusUnauthorized {
+	if !isInvalidGrantErrorMessage(err.Code) && !isInvalidGrantErrorMessage(err.Message) {
 		return false
 	}
-	return isInvalidGrantErrorMessage(err.Code) || isInvalidGrantErrorMessage(err.Message)
+	status := statusCodeFromResult(err)
+	if status == http.StatusBadRequest || status == http.StatusUnauthorized || status == 0 {
+		return true
+	}
+	return false
 }
 
 func isCodexModelSupportResultError(result Result) bool {

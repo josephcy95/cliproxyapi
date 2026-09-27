@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
 // SetRetryConfig updates retry attempts, credential retry limit and cooldown wait interval.

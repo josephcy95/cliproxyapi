@@ -3,8 +3,8 @@ package helps
 import (
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/excel"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/excel"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 )
 
 // ExcelProvider is the ownership label used for the Excel-backed catalog
