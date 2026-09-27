@@ -83,6 +83,9 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 
 	// Get all available models
 	allModels := h.Models()
+	// Reuse the Codex catalog builder so models without a static registry entry
+	// still receive the same context/reasoning metadata as client_version users.
+	codexMetadata := codexModelMetadataBySlug(h.codexClientModelsResponse())
 
 	// Return the standard OpenAI identity fields plus optional capability metadata.
 	filteredModels := make([]map[string]any, len(allModels))
@@ -106,9 +109,24 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 			filteredModel["max_context_window"] = contextWindow
 		}
 		if modelID, ok := model["id"].(string); ok {
-			if reasoningLevels, defaultLevel := openAIModelReasoningMetadata(modelID); len(reasoningLevels) > 0 {
-				filteredModel["supported_reasoning_levels"] = reasoningLevels
-				filteredModel["default_reasoning_level"] = defaultLevel
+			if metadata, exists := codexMetadata[modelID]; exists {
+				for _, key := range []string{"context_window", "max_context_window"} {
+					if value, present := metadata[key]; present {
+						filteredModel[key] = value
+					}
+				}
+				if levels, defaultLevel := codexReasoningMetadata(metadata); len(levels) > 0 {
+					filteredModel["supported_reasoning_levels"] = levels
+					filteredModel["default_reasoning_level"] = defaultLevel
+				}
+			}
+		}
+		if modelID, ok := model["id"].(string); ok {
+			if _, hasCodexMetadata := codexMetadata[modelID]; !hasCodexMetadata {
+				if reasoningLevels, defaultLevel := openAIModelReasoningMetadata(modelID); len(reasoningLevels) > 0 {
+					filteredModel["supported_reasoning_levels"] = reasoningLevels
+					filteredModel["default_reasoning_level"] = defaultLevel
+				}
 			}
 		}
 
@@ -119,6 +137,39 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 		"object": "list",
 		"data":   filteredModels,
 	})
+}
+
+func codexModelMetadataBySlug(response map[string]any) map[string]map[string]any {
+	result := make(map[string]map[string]any)
+	models, ok := response["models"].([]map[string]any)
+	if !ok {
+		return result
+	}
+	for _, model := range models {
+		if slug, ok := model["slug"].(string); ok && strings.TrimSpace(slug) != "" {
+			result[slug] = model
+		}
+	}
+	return result
+}
+
+func codexReasoningMetadata(model map[string]any) ([]string, string) {
+	raw, ok := model["supported_reasoning_levels"].([]any)
+	if !ok {
+		return nil, ""
+	}
+	levels := make([]string, 0, len(raw))
+	for _, item := range raw {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if effort, ok := entry["effort"].(string); ok && effort != "" {
+			levels = append(levels, effort)
+		}
+	}
+	defaultLevel, _ := model["default_reasoning_level"].(string)
+	return levels, defaultLevel
 }
 
 func openAIModelReasoningMetadata(modelID string) ([]string, string) {
