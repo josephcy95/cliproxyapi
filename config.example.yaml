@@ -923,6 +923,12 @@ config-version: 8
 # Note: this backend rejects the "max", "minimal" and "ultra" reasoning efforts
 # (they fall back to "medium"), and injects a spreadsheet system prompt that a
 # caller's own instructions override.
+#
+# Each alias advertises the same context window, maximum context window and token
+# limits as the public Codex model it maps onto, so the alias is never narrower
+# than the ordinary route. Built-in aliases cover gpt-6-astra, gpt-6-sol,
+# gpt-6-luna, gpt-5.6-luna, gpt-5.6-terra and gpt-5.6-sol (there is no
+# gpt-6-terra).
 
 # Vertex API keys (Vertex-compatible endpoints, base-url is optional)
 # vertex-api-key:

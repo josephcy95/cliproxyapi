@@ -24,6 +24,11 @@ type Model struct {
 	Alias string
 	// DisplayName is shown in the Codex client model picker.
 	DisplayName string
+	// BaseModel is the public Codex model this alias shares its model with. It
+	// supplies the advertised context window, token limits and capabilities, so
+	// the Excel route looks like the ordinary model instead of an anonymous
+	// catalog entry. Empty means the alias has no public equivalent.
+	BaseModel string
 	// ContextLength overrides the advertised context window. Zero means unknown,
 	// in which case DefaultContextLength is advertised.
 	ContextLength int
@@ -31,33 +36,58 @@ type Model struct {
 	Efforts []string
 }
 
-// DefaultModels mirrors the alias set published by Nonary/ghcp_proxy.
+// DefaultModels mirrors the alias set published by Nonary/ghcp_proxy, extended
+// with the GPT-6 aliases the backend serves.
 //
 // Descriptions are intentionally absent: the Codex client builds its own
 // prompt text and the upstream slug is what selects the actual backend model.
+//
+// Each entry names its BaseModel so the alias inherits the public model's
+// advertised context window, token limits and capabilities. The Excel route is
+// the same model on a different backend endpoint, not a separate model, so it
+// must not look narrower than the ordinary route; only the reasoning efforts
+// differ (see the package comment in protocol.go).
 var DefaultModels = []Model{
 	{
 		Slug:        "gpt-6-astra",
 		Alias:       "gpt-6-astra-excel",
 		DisplayName: "6-Astra Excel",
+		BaseModel:   "gpt-6-astra",
+		Efforts:     []string{"low", "medium", "high", "xhigh"},
+	},
+	{
+		Slug:        "gpt-6-sol",
+		Alias:       "gpt-6-sol-excel",
+		DisplayName: "6-Sol Excel",
+		BaseModel:   "gpt-6-sol",
+		Efforts:     []string{"low", "medium", "high", "xhigh"},
+	},
+	{
+		Slug:        "gpt-6-luna",
+		Alias:       "gpt-6-luna-excel",
+		DisplayName: "6-Luna Excel",
+		BaseModel:   "gpt-6-luna",
 		Efforts:     []string{"low", "medium", "high", "xhigh"},
 	},
 	{
 		Slug:        "gpt-5.6-luna",
 		Alias:       "gpt-5.6-luna-excel",
 		DisplayName: "5.6-Luna Excel",
+		BaseModel:   "gpt-5.6-luna",
 		Efforts:     []string{"low", "medium", "high", "xhigh"},
 	},
 	{
 		Slug:        "gpt-5.6-terra",
 		Alias:       "gpt-5.6-terra-excel",
 		DisplayName: "5.6-Terra Excel",
+		BaseModel:   "gpt-5.6-terra",
 		Efforts:     []string{"low", "medium", "high", "xhigh"},
 	},
 	{
 		Slug:        "gpt-5.6-sol",
 		Alias:       "gpt-5.6-sol-excel",
 		DisplayName: "5.6-Sol Excel",
+		BaseModel:   "gpt-5.6-sol",
 		Efforts:     []string{"low", "medium", "high", "xhigh"},
 	},
 }
@@ -88,6 +118,41 @@ var EffortAliases = map[string]string{
 	"x-high":     "xhigh",
 	"extra-high": "xhigh",
 	"extra_high": "xhigh",
+}
+
+// BaseModelFor maps an Excel alias onto the public Codex model that shares its
+// underlying model.
+//
+// The Excel backend is an alternative route to the same model, so the alias must
+// advertise the same context window and token limits as the public route; only
+// the reasoning efforts differ, because this backend rejects "max" and "ultra".
+// The mapping is declared on the alias entry (Model.BaseModel) rather than
+// guessed from the name.
+//
+// Provider prefixes and reasoning suffixes are tolerated, matching IsRoute. A
+// bare upstream slug is not an alias and never resolves here. A false result
+// means the alias has no public Codex equivalent, and it falls back to the
+// generic Excel defaults.
+func BaseModelFor(model string) (string, bool) {
+	model = strings.TrimSpace(model)
+	if i := strings.LastIndex(model, "("); i >= 0 && strings.HasSuffix(model, ")") {
+		model = model[:i]
+	}
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		model = model[i+1:]
+	}
+	if !IsAlias(model) {
+		return "", false
+	}
+	m, ok := LookupAlias(model)
+	if !ok {
+		return "", false
+	}
+	base := strings.TrimSpace(m.BaseModel)
+	if base == "" {
+		return "", false
+	}
+	return base, true
 }
 
 // LookupAlias resolves a client-facing alias to its upstream model.

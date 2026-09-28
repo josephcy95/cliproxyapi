@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 )
 
@@ -250,6 +251,34 @@ func codexClientMetadataModelID(id string) string {
 		return base
 	}
 	return id
+}
+
+// codexClientBaseModelID returns the public model whose catalog metadata the
+// given model should inherit, or "" when the model stands on its own.
+//
+// This is what makes an alias route advertise the same context window, token
+// limits and capabilities as the model it actually serves. The Excel
+// ("-excel") aliases are the motivating case: they are the same model on a
+// different backend endpoint, so treating them as unknown models made them
+// advertise a smaller window and an empty capability set than the ordinary
+// route.
+//
+// Only the context/token limits differ from the alias's own entry; reasoning
+// levels stay with the alias, because the Excel backend rejects "max" and
+// "ultra".
+func codexClientBaseModelID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if base, ok := excel.BaseModelFor(id); ok {
+		return base
+	}
+	if idx := strings.Index(id, "/"); idx != -1 {
+		// Provider-prefixed alias, e.g. "kiro/gpt-6-sol-excel".
+		return codexClientBaseModelID(id[idx+1:])
+	}
+	return ""
 }
 
 func applyCodexClientDisplayName(entry map[string]any, model map[string]any) {
@@ -630,7 +659,26 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 	displayName := stringModelValue(model, "display_name")
 	description := stringModelValue(model, "description")
 	contextWindow := intModelValue(model, "context_length")
+	maxContextWindow := intModelValue(model, "max_context_length")
+	maxTokens := intModelValue(model, "max_completion_tokens")
 	thinkingSupport := codexClientThinkingSupport(model)
+
+	// An alias that names a public base model supplies the advertised context
+	// window, maximum context window and output token limit. The alias is the
+	// same model served on a different endpoint, so it must not look narrower
+	// than the ordinary route; only its reasoning levels differ.
+	//
+	// An explicit per-model configuration (max_context_length) still wins, so
+	// the model-context-overrides feature keeps its meaning for aliases too.
+	configOverride := maxContextWindow > 0
+	if base := codexClientBaseModelID(id); base != "" {
+		if !configOverride {
+			contextWindow, maxContextWindow = codexClientBaseModelWindow(base)
+		}
+		if maxTokens <= 0 {
+			maxTokens = codexClientBaseModelMaxTokens(base)
+		}
+	}
 
 	if info != nil {
 		if info.DisplayName != "" {
@@ -655,9 +703,16 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 	}
 	applyCodexClientThinkingMetadata(entry, thinkingSupport, clientVersion)
 
-	if maxContextWindow := intModelValue(model, "max_context_length"); maxContextWindow > 0 {
+	// A configured max_context_length replaces the window outright, matching the
+	// historical behavior of the model-context-overrides feature. Otherwise the
+	// maximum window follows the base model's, falling back to the input window
+	// and never falling below it.
+	if configOverride {
 		contextWindow = maxContextWindow
+	} else if maxContextWindow <= 0 {
+		maxContextWindow = contextWindow
 	}
+	maxContextWindow = maxInt(maxContextWindow, contextWindow)
 
 	if displayName == "" {
 		displayName = id
@@ -678,7 +733,10 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 
 	if contextWindow > 0 {
 		entry["context_window"] = contextWindow
-		entry["max_context_window"] = contextWindow
+		entry["max_context_window"] = maxContextWindow
+	}
+	if maxTokens > 0 {
+		entry["max_tokens"] = maxTokens
 	}
 
 	if plans, ok := model["available_in_plans"]; ok {
@@ -688,6 +746,62 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 	// full template instructions onto every non-template model exceeds that limit
 	// and the client keeps its bundled catalog.
 	useCompactCodexClientInstructions(entry)
+}
+
+// codexClientBaseModelWindow returns the advertised input and maximum context
+// windows of a public base model, preferring its static client-catalog template
+// (the authoritative source for these limits) over the runtime registry entry.
+func codexClientBaseModelWindow(base string) (contextWindow, maxContextWindow int) {
+	if template := codexClientTemplateFor(base); template != nil {
+		if value := intModelValue(template, "context_window"); value > 0 {
+			contextWindow = value
+		}
+		if value := intModelValue(template, "max_context_window"); value > 0 {
+			maxContextWindow = value
+		}
+	}
+	if info := registry.LookupModelInfo(base); info != nil {
+		if contextWindow <= 0 && info.ContextLength > 0 {
+			contextWindow = info.ContextLength
+		}
+		if maxContextWindow <= 0 && info.MaxContextLength > 0 {
+			maxContextWindow = info.MaxContextLength
+		}
+	}
+	return contextWindow, maxContextWindow
+}
+
+// codexClientBaseModelMaxTokens returns the maximum output tokens advertised for
+// a public base model.
+func codexClientBaseModelMaxTokens(base string) int {
+	if template := codexClientTemplateFor(base); template != nil {
+		if value := intModelValue(template, "max_tokens"); value > 0 {
+			return value
+		}
+	}
+	if info := registry.LookupModelInfo(base); info != nil {
+		if info.MaxCompletionTokens > 0 {
+			return info.MaxCompletionTokens
+		}
+	}
+	return 0
+}
+
+// codexClientTemplateFor returns the static client-catalog template for a model
+// slug, or nil when the catalog carries no entry for it.
+func codexClientTemplateFor(slug string) map[string]any {
+	templates, _, err := loadCodexClientModelTemplates()
+	if err != nil {
+		return nil
+	}
+	return templates[codexClientMetadataModelID(slug)]
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func codexClientThinkingSupport(model map[string]any) *registry.ThinkingSupport {
