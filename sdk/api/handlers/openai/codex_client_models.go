@@ -14,11 +14,15 @@ func (h *OpenAIAPIHandler) codexClientModelsResponse(clientVersion ...string) ma
 	if len(clientVersion) > 0 {
 		version = clientVersion[0]
 	}
-	optimizeMultiAgentV2 := h != nil && h.Cfg != nil && h.Cfg.CodexOptimizeMultiAgentV2
+	optimizeMultiAgentV2 := h != nil && h.Cfg != nil && h.Cfg.Client.Codex.OptimizeMultiAgentV2
 	// Build from base registry models (without private virtual ids), then clone catalog
 	// entries so private variants keep full template/capability metadata.
 	baseModels := registry.GetGlobalRegistry().GetAvailableModels("openai")
-	built := codexmodels.BuildResponseForClient(baseModels, codexClientProvidersForModel(h), optimizeMultiAgentV2, version)
+	var applyPatchCapabilityForModel codexmodels.ApplyPatchCapabilityForModelFunc
+	if h != nil && h.Cfg != nil && h.Cfg.Client.Codex.EnableApplyPatch {
+		applyPatchCapabilityForModel = h.SupportsApplyPatchModel
+	}
+	built := codexmodels.BuildResponseForClientWithToolCapabilities(baseModels, codexClientProvidersForModel(h), registry.GetGlobalRegistry().GetResponsesWebSearchCapability, applyPatchCapabilityForModel, optimizeMultiAgentV2, version)
 	if raw, ok := built["models"].([]map[string]any); ok {
 		built["models"] = handlers.ExpandPrivateCodexClientModels(h.AuthManager, raw)
 	}

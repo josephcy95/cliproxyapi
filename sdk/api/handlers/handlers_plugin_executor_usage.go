@@ -23,10 +23,7 @@ func parsePluginExecutorResponseUsage(protocol string, payload []byte) usage.Det
 	case "antigravity":
 		return helps.ParseAntigravityUsage(payload)
 	case "codex", "openai-response":
-		if detail, ok := helps.ParseCodexUsage(payload); ok {
-			return detail
-		}
-		return helps.ParseOpenAIUsage(payload)
+		return parseResponsesPluginExecutorUsage(payload)
 	default:
 		return helps.ParseOpenAIUsage(payload)
 	}
@@ -64,7 +61,7 @@ func observePluginExecutorStreamUsage(protocol string, payload []byte, buffer *h
 	case "codex", "openai-response":
 		iterateStreamLines(payload, func(line []byte) {
 			if jsonBytes := extractStreamJSONPayload(line); len(jsonBytes) > 0 {
-				if detail, ok := helps.ParseCodexUsage(jsonBytes); ok {
+				if detail, ok := helps.ParseCodexUsage(jsonBytes); ok && hasPluginTokenUsage(detail) {
 					buffer.Observe(detail, ok)
 					return
 				}
@@ -194,4 +191,29 @@ func extractStreamJSONPayload(line []byte) []byte {
 		return nil
 	}
 	return trimmed
+}
+
+// parseResponsesPluginExecutorUsage reads both streaming-event usage (response.usage)
+// and a completed Responses object (top-level usage). A service tier without
+// response.usage must not hide the completed object's token counts.
+func parseResponsesPluginExecutorUsage(payload []byte) usage.Detail {
+	detail, ok := helps.ParseCodexUsage(payload)
+	if ok && hasPluginTokenUsage(detail) {
+		return detail
+	}
+	openAIDetail := helps.ParseOpenAIUsage(payload)
+	if hasPluginTokenUsage(openAIDetail) {
+		if openAIDetail.ResponseServiceTier == "" {
+			openAIDetail.ResponseServiceTier = detail.ResponseServiceTier
+		}
+		return openAIDetail
+	}
+	if ok {
+		return detail
+	}
+	return openAIDetail
+}
+
+func hasPluginTokenUsage(d usage.Detail) bool {
+	return d.InputTokens != 0 || d.OutputTokens != 0 || d.TotalTokens != 0 || d.CachedTokens != 0 || d.ReasoningTokens != 0 || d.CacheReadTokens != 0 || d.CacheCreationTokens != 0
 }

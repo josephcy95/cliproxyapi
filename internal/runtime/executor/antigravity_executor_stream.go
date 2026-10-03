@@ -134,7 +134,7 @@ attemptLoop:
 				err = errReq
 				return nil, err
 			}
-			httpResp, errDo := httpClient.Do(httpReq)
+			httpResp, errDo := helps.WithAntigravityHTTPClientTrace(httpClient, auth, "generate_stream").Do(httpReq)
 			if errDo != nil {
 				helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 				if errors.Is(errDo, context.Canceled) || errors.Is(errDo, context.DeadlineExceeded) {
@@ -273,7 +273,10 @@ attemptLoop:
 				scanner := bufio.NewScanner(resp.Body)
 				scanner.Buffer(nil, streamScannerBuffer)
 				claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
+				var streamUsage helps.StreamUsageBuffer
+				defer streamUsage.Publish(ctx, reporter)
 				var param any
+				helps.InitializeApplyPatchStream(ctx, to, responseFormat, req.Model, helps.ApplyPatchOriginalRequest(req, opts), translated, &param)
 				for scanner.Scan() {
 					line := scanner.Bytes()
 					helps.AppendAPIResponseChunk(ctx, e.cfg, line)
@@ -292,11 +295,12 @@ attemptLoop:
 					reporter.ObserveResponseModel(payload)
 
 					if detail, ok := helps.ParseAntigravityStreamUsage(payload); ok {
-						reporter.Publish(ctx, detail)
+						streamUsage.Observe(detail, true)
 					}
 
 					payload = e.resolveWebSearchGroundingURLs(ctx, auth, from, originalPayload, translated, payload)
-					chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, bytes.Clone(payload), &param, claudeInputTokens)
+					chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, helps.ApplyPatchOriginalRequest(req, opts), translated, bytes.Clone(payload), &param, claudeInputTokens)
+					helps.RecordApplyPatchStreamFailure(ctx, param, reporter, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage})
 					for i := range chunks {
 						select {
 						case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
@@ -304,14 +308,12 @@ attemptLoop:
 							return
 						}
 					}
-				}
-				tail := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("[DONE]"), &param, claudeInputTokens)
-				for i := range tail {
-					select {
-					case out <- cliproxyexecutor.StreamChunk{Payload: tail[i]}:
-					case <-ctx.Done():
+					if helps.StopApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage}) {
 						return
 					}
+				}
+				if helps.EndApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage}) {
+					return
 				}
 				if errScan := scanner.Err(); errScan != nil {
 					helps.RecordAPIResponseError(ctx, e.cfg, errScan)
@@ -320,10 +322,19 @@ attemptLoop:
 					case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
 					case <-ctx.Done():
 					}
-				} else {
+				} else if ctx.Err() == nil {
+					tail := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, helps.ApplyPatchOriginalRequest(req, opts), translated, []byte("[DONE]"), &param, claudeInputTokens)
+					for i := range tail {
+						select {
+						case out <- cliproxyexecutor.StreamChunk{Payload: tail[i]}:
+						case <-ctx.Done():
+							return
+						}
+					}
 					if replayAccumulator != nil {
 						replayAccumulator.Commit(ctx)
 					}
+					streamUsage.Publish(ctx, reporter)
 					reporter.EnsurePublished(ctx)
 				}
 			}(httpResp)

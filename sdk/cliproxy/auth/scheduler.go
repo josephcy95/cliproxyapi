@@ -41,6 +41,7 @@ type authScheduler struct {
 	strategy            schedulerStrategy
 	providers           map[string]*providerScheduler
 	authProviders       map[string]string
+	authGenerations     map[string]scheduledGenerationMeta
 	mixedCursors        map[string]int
 	mixedWeightedStates map[string]*smoothWeightedState
 	// Fork: Codex private-instructions policy mirrored from Manager runtime config so
@@ -735,6 +736,16 @@ func containsProvider(providers []string, provider string) bool {
 
 // upsertAuthLocked updates one auth in-place while the scheduler mutex is held.
 func (s *authScheduler) upsertAuthLocked(auth *Auth, now time.Time) {
+	if auth != nil && auth.ID != "" {
+		if s.authGenerations == nil {
+			s.authGenerations = make(map[string]scheduledGenerationMeta)
+		}
+		previous, seen := s.authGenerations[auth.ID]
+		if seen && (auth.RegistrationEpoch < previous.epoch || (auth.RegistrationEpoch == previous.epoch && auth.Generation < previous.generation)) {
+			return
+		}
+		s.authGenerations[auth.ID] = scheduledGenerationMeta{epoch: auth.RegistrationEpoch, generation: auth.Generation, updatedAt: now}
+	}
 	if auth == nil {
 		return
 	}
@@ -1509,4 +1520,26 @@ func pickSmoothWeightedScheduled(entries []*scheduledAuth, current map[string]in
 	}
 	current[picked.auth.ID] = saturatingAddInt64(current[picked.auth.ID], -totalWeight)
 	return picked
+}
+
+type scheduledGenerationMeta struct {
+	epoch      uint64
+	generation uint64
+	updatedAt  time.Time
+}
+
+func (s *authScheduler) RecordRemovalTombstone(id string, epoch uint64) {
+	if s == nil || strings.TrimSpace(id) == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.authGenerations == nil {
+		s.authGenerations = make(map[string]scheduledGenerationMeta)
+	}
+	if old, ok := s.authGenerations[id]; ok && epoch < old.epoch {
+		return
+	}
+	s.authGenerations[id] = scheduledGenerationMeta{epoch: epoch, updatedAt: time.Now()}
+	s.removeAuthLocked(id)
 }

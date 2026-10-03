@@ -1,12 +1,17 @@
 package config
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
+	log "github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"gopkg.in/yaml.v3"
 )
 
@@ -302,6 +307,178 @@ proxy-url: old
 	}
 }
 
+func TestV8MigrationCommentsUnknownNestedFields(t *testing.T) {
+	raw := []byte(`server: {port: 8317}
+routing: {strategy: fill-first, session-affinity: true}
+oauth:
+  providers:
+    codex:
+      disable-codex-cloaking: true
+      retired-setting: {mode: old}
+`)
+	unchanged, changed, err := NormalizeConfigLayout(raw, false)
+	if err != nil || changed || string(unchanged) != string(raw) {
+		t.Fatalf("read-only normalization changed existing config: changed=%v error=%v", changed, err)
+	}
+	migrated, _, err := NormalizeConfigLayout(raw, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ValidateV8Config(migrated); err != nil {
+		t.Fatalf("migrated config is invalid: %v\n%s", err, migrated)
+	}
+	var doc yaml.Node
+	if err = yaml.Unmarshal(migrated, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if yamlPath(doc.Content[0], "oauth.providers.codex.retired-setting") != nil || !strings.Contains(string(migrated), "# oauth.providers.codex.retired-setting:") {
+		t.Fatalf("unknown nested field was not preserved as a comment: %s", migrated)
+	}
+	cfg, err := ParseConfigBytes(migrated)
+	if err != nil || cfg.Routing.Strategy != "fill-first" || !cfg.Routing.SessionAffinity || !cfg.Codex.DisableCodexCloaking {
+		t.Fatalf("migration changed known settings: cfg=%+v error=%v", cfg, err)
+	}
+	remigrated, _, err := NormalizeConfigLayout(migrated, true)
+	if err != nil || strings.Count(string(remigrated), "# oauth.providers.codex.retired-setting:") != 1 {
+		t.Fatalf("repeated migration lost or duplicated the comment: %v\n%s", err, remigrated)
+	}
+}
+
+func TestV8MigrationCommentsUnknownLegacySectionsWarnsConsole(t *testing.T) {
+	logger := log.StandardLogger()
+	previousHooks := logger.ReplaceHooks(make(log.LevelHooks))
+	previousLevel := logger.GetLevel()
+	previousOut := logger.Out
+	hook := logtest.NewLocal(logger)
+	logger.SetLevel(log.WarnLevel)
+	t.Cleanup(func() {
+		logger.ReplaceHooks(previousHooks)
+		logger.SetLevel(previousLevel)
+		logger.SetOutput(previousOut)
+	})
+
+	raw := []byte(`host: "127.0.0.1"
+port: 8317
+some-obsolete-legacy-block:
+  alpha: 1
+  beta: two
+another-legacy-key:
+  gamma: 3
+`)
+	migrated, changed, errMigrate := NormalizeConfigLayout(raw, true)
+	if errMigrate != nil || !changed {
+		t.Fatalf("NormalizeConfigLayout() error = %v, changed = %v", errMigrate, changed)
+	}
+	if !strings.Contains(string(migrated), "# some-obsolete-legacy-block:") || !strings.Contains(string(migrated), "# another-legacy-key:") {
+		t.Fatalf("expected unknown sections to be commented out, got: %s", string(migrated))
+	}
+
+	foundSections := make(map[string]bool)
+	for _, entry := range hook.AllEntries() {
+		if entry.Level == log.WarnLevel {
+			if strings.Contains(entry.Message, "some-obsolete-legacy-block") {
+				foundSections["some-obsolete-legacy-block"] = true
+			}
+			if strings.Contains(entry.Message, "another-legacy-key") {
+				foundSections["another-legacy-key"] = true
+			}
+			if !strings.Contains(entry.Message, "unrecognized") || !strings.Contains(entry.Message, "commented out") {
+				t.Fatalf("expected warning message to convey 'unrecognized' and 'commented out', got: %s", entry.Message)
+			}
+			if strings.Contains(entry.Message, "server") || strings.Contains(entry.Message, "host") || strings.Contains(entry.Message, "port") {
+				t.Fatalf("known section falsely reported in warning: %s", entry.Message)
+			}
+		}
+	}
+	if !foundSections["some-obsolete-legacy-block"] || !foundSections["another-legacy-key"] {
+		t.Fatalf("expected warnings for all unmapped sections, found: %+v", foundSections)
+	}
+
+	// Repeated migration should not repeat warnings
+	hook.Reset()
+	remigrated, _, errRemigrate := NormalizeConfigLayout(migrated, true)
+	if errRemigrate != nil {
+		t.Fatalf("repeated NormalizeConfigLayout() error = %v", errRemigrate)
+	}
+	if len(hook.AllEntries()) != 0 {
+		t.Fatalf("expected no warnings on repeated migration, got: %+v", hook.AllEntries())
+	}
+	_ = remigrated
+
+	// Test warning hook customization
+	var hookBuf bytes.Buffer
+	var hookMu sync.Mutex
+	SetV8MigrationWarnFunc(func(section, msg string) {
+		log.Warn(msg)
+		hookMu.Lock()
+		_, _ = fmt.Fprintf(&hookBuf, "HOOK: %s -> %s\n", section, msg)
+		hookMu.Unlock()
+	})
+	t.Cleanup(func() {
+		SetV8MigrationWarnFunc(nil)
+	})
+
+	hook.Reset()
+	_, _, errMigrateHook := NormalizeConfigLayout(raw, true)
+	if errMigrateHook != nil {
+		t.Fatalf("NormalizeConfigLayout() under custom hook error = %v", errMigrateHook)
+	}
+
+	hookOutput := hookBuf.String()
+	if !strings.Contains(hookOutput, "HOOK: some-obsolete-legacy-block") || !strings.Contains(hookOutput, "HOOK: another-legacy-key") {
+		t.Fatalf("expected custom hook to capture warnings, got: %s", hookOutput)
+	}
+
+	// Known-only config produces no warnings
+	hook.Reset()
+	hookBuf.Reset()
+	knownRaw := []byte(`host: "127.0.0.1"
+port: 8317
+debug: true
+`)
+	_, _, errKnown := NormalizeConfigLayout(knownRaw, true)
+	if errKnown != nil {
+		t.Fatalf("NormalizeConfigLayout() error = %v", errKnown)
+	}
+	if len(hook.AllEntries()) != 0 || hookBuf.Len() != 0 {
+		t.Fatalf("expected no warnings for purely known configuration, got logs=%+v hook=%s", hook.AllEntries(), hookBuf.String())
+	}
+}
+
+func TestV8MigrationConcurrentOutputSwitch(t *testing.T) {
+	raw := []byte(`host: "127.0.0.1"
+port: 8317
+some-concurrent-legacy-block:
+  data: true
+`)
+	var warnMu sync.Mutex
+	var buf bytes.Buffer
+	customWarn := func(section, msg string) {
+		warnMu.Lock()
+		_, _ = fmt.Fprintf(&buf, "%s: %s\n", section, msg)
+		warnMu.Unlock()
+	}
+	SetV8MigrationWarnFunc(customWarn)
+	t.Cleanup(func() {
+		SetV8MigrationWarnFunc(nil)
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			SetV8MigrationWarnFunc(customWarn)
+			SetV8MigrationWarnFunc(nil)
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, _ = NormalizeConfigLayout(raw, true)
+		}()
+	}
+	wg.Wait()
+}
+
 func TestV8SaveCommentsObsoleteSections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	raw := `auth: {old: true}
@@ -348,10 +525,10 @@ func TestV8MigrationPreservesEmptyLegacyContainers(t *testing.T) {
 		{"streaming", "requests.streaming"}, {"payload", "requests.payload"},
 		{"codex", "oauth.providers.codex"}, {"codex.live-media-relay", "oauth.providers.codex.live-media-relay"},
 		{"codex-header-defaults", "oauth.providers.codex.header-defaults"},
-		{"claude", "oauth.providers.claude"}, {"claude-code", "oauth.providers.claude.claude-code"},
-		{"claude-header-defaults", "oauth.providers.claude.header-defaults"},
+		{"claude", "upstream.claude"}, {"claude-code", "upstream.claude"},
+		{"claude-header-defaults", "upstream.claude.header-defaults"},
 		{"antigravity", "oauth.providers.antigravity"}, {"antigravity.connection-pool", "oauth.providers.antigravity.connection-pool"},
-		{"xai", "oauth.providers.xai"}, {"devin", "oauth.providers.devin"},
+		{"xai", "upstream.xai"}, {"devin", "oauth.providers.devin"},
 	} {
 		for _, empty := range []string{"{}", "null"} {
 			t.Run(section.old+"/"+empty, func(t *testing.T) {
@@ -414,7 +591,7 @@ func TestV8MigrationPreservesEmptyLegacyContainers(t *testing.T) {
 func TestV8EmptyLegacyContainersKeepNewValues(t *testing.T) {
 	raw := []byte(`port: 8317
 tls: null
-codex: {identity-confuse: true, live-media-relay: {}}
+codex: {disable-codex-cloaking: true, live-media-relay: {}}
 server: {tls: {enable: true, cert: server.crt, key: server.key}}
 oauth: {providers: {codex: {live-media-relay: {max-sessions: 12}}}}
 `)
@@ -427,7 +604,7 @@ oauth: {providers: {codex: {live-media-relay: {max-sessions: 12}}}}
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !cfg.TLS.Enable || cfg.TLS.Cert != "server.crt" || cfg.TLS.Key != "server.key" || cfg.Codex.LiveMediaRelay.MaxSessions != 12 || !cfg.Codex.IdentityConfuse {
+		if !cfg.TLS.Enable || cfg.TLS.Cert != "server.crt" || cfg.TLS.Key != "server.key" || cfg.Codex.LiveMediaRelay.MaxSessions != 12 || !cfg.Codex.DisableCodexCloaking {
 			t.Fatal("empty legacy block overwrote new values or a non-empty sibling")
 		}
 		var doc yaml.Node
@@ -437,7 +614,7 @@ oauth: {providers: {codex: {live-media-relay: {max-sessions: 12}}}}
 		if yamlPath(doc.Content[0], "tls") != nil || yamlPath(doc.Content[0], "codex.live-media-relay") != nil {
 			t.Fatal("conflicting empty legacy blocks were not removed")
 		}
-		if !migrate && yamlPath(doc.Content[0], "codex.identity-confuse") == nil {
+		if !migrate && yamlPath(doc.Content[0], "codex.disable-codex-cloaking") == nil {
 			t.Fatal("conflict cleanup migrated a non-conflicting legacy sibling")
 		}
 	}

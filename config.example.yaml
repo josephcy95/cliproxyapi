@@ -190,24 +190,11 @@ multimedia:
     # Base model used by the legacy hosted image_generation tool path when a Codex image request is not proxied directly through the Image API.
     # Must start with "gpt-" (case-insensitive). If unset or invalid, defaults to "gpt-5.4-mini".
     # gpt-image-2-base-model: "gpt-5.4-mini"
+# How long video IDs returned by /openai/v1/videos and xAI video creation stay bound
+# to the credential that created them. Default: 3h.
 
-    # How long video IDs returned by /openai/v1/videos and xAI video creation stay bound
-    # to the credential that created them. Default: 3h.
 oauth:
     providers:
-        claude:
-            claude-code:
-                disable-cloaking-model-list: false
-                # When true, return original model IDs in Anthropic model list responses instead of cloaked IDs.
-            model-level-cooling: false
-            # When true, scope quota cooldowns to the requested model rather than cooling down
-            # the entire credential across all sibling models. Default is false.
-            disable-claude-cloak-mode: false
-            # When true, globally disable Claude request cloaking (the Claude Code CLI disguise and
-            # system prompt replacement), so the original system prompt is passed through to Claude as-is.
-            # Individual credentials can still override this: a claude-api-key entry via its "cloak.mode",
-            # or a Claude OAuth/token file via a "cloak_mode" value. Default false keeps the per-client
-            # "auto" behavior (cloak only non-Claude-Code clients).
         aistudio:
             # When true, enable authentication for the WebSocket API (/v1/ws).
             ws-auth: true
@@ -249,83 +236,6 @@ oauth:
             # Cooldown prefers upstream resets_at / resets_in_seconds; fallback hours apply only when
             # those fields are missing. Transient rate_limit_error is not counted here.
             usage-limit-cooldown-fallback-hours: 1
-            disable-codex-cloaking: false
-            # Disable forcing the official Codex User-Agent and Originator headers on HTTP/SSE and WebSocket requests.
-            stream-bootstrap-buffering: false
-            # Hold back the frames that carry nothing the client has seen - the handshake (response.created,
-            # response.in_progress, the websocket metadata frames), keepalive heartbeats, and the *.added
-            # announcements of an item or part that is still empty - until the upstream emits its first
-            # generated event. Anything else, including a server-side tool item such as web_search_call and
-            # any frame not on that list, releases the stream immediately. On the SSE transport the lines that
-            # are not `data:` frames - comments, `event:` lines, blank separators - are held alongside them.
-            # The hold is bounded by a frame budget and a 1 MiB byte budget, not by wall-clock time: an
-            # upstream that trickles frames holds the response headers for as long as the client will wait.
-            # Why: the upstream smuggles `server_is_overloaded` rejections *inside* an HTTP 200 stream,
-            # right after those handshake events, instead of returning 503 on the wire. Buffering them
-            # keeps the downstream response headers uncommitted long enough to transparently retry on
-            # another credential. Only overload/rate-limit rejections trigger failover; every other terminal
-            # failure is still delivered in-stream exactly as before. One pre-existing behaviour is worth
-            # knowing, because this option makes the window it lives in much longer: if the stream ends while
-            # the bootstrap is still holding, the attempt ends instead of the error reaching the client, and
-            # whether another credential is then tried depends on how it ended. A clean end with no terminal
-            # event is request-scoped on SSE, so nothing else is tried; a websocket close, or a transport error
-            # such as a dropped connection on either transport, is not, so the request may be retried on
-            # another credential. None of that is new, but before this option the hold ended at the first
-            # keepalive, so it was rare; now it can span the whole reasoning phase.
-            # Trade-off: response headers are delayed until generation starts. Because heartbeats are held
-            # too, the delay now ends at the first generated token rather than at the first heartbeat. The
-            # budget bounds how much is held, not how long: 48 SSE lines, which measures out as 15 heartbeats
-            # of the three-line event:/data:/blank shape, 23 of a two-line ": keepalive" comment followed by
-            # its blank separator, or 47 of a bare ": keepalive" with no separator - one short of the obvious
-            # division, because the rejection frame's own event: line comes out of the same budget before its
-            # data: line is parsed. An upstream that sends the rejection as a bare data: line with no event:
-            # line gets the round number instead. At a 10s upstream heartbeat that is 150s, 230s or 470s of
-            # uncommitted response headers depending on the framing the upstream picks, all of it past nginx's
-            # 60s default proxy_read_timeout, so raise the timeouts in front of the proxy before enabling this.
-            # Those seconds bound what the buffer holds, not when the response headers are committed. Headers
-            # are committed on the first chunk the downstream translator actually produces, so for a format
-            # that renders the handshake as nothing - Chat Completions and Gemini do - they stay uncommitted
-            # past the budget, until the first generated token. That is not specific to the budget: any frame
-            # that releases the buffer has always behaved this way.
-            # The websocket transport spends the same 48 differently - one per message read, whether the loop
-            # holds it or skips it, with no framing to divide by - so there it is 48 heartbeats, about 480s.
-            # Two cases no budget covers: a websocket peer that sends only ping frames, which the library
-            # answers inside the read call, leaving only the 5 minute websocket read deadline; and an upstream
-            # that stops mid-line on SSE, where the scanner never returns and only the request context ends the
-            # wait. Neither is made worse by this option - with it off the same stalled line stalls the
-            # conductor instead, which waits on the same context - but a client-side request timeout, not
-            # proxy_read_timeout, is what bounds them.
-            # Default: false
-            stream-bootstrap-timeout: "0"
-            # Optional maximum duration to hold back uncommitted response headers during bootstrap buffering.
-            # When set (e.g. "20s"), if the time ceiling is reached before the first generated token,
-            # the stream is released to the client and further in-stream overloads are delivered rather
-            # than failed over. This bounds how long trickled heartbeats or early empty frames can delay
-            # response headers before streaming begins.
-            # Recommendation: If your CPA is deployed behind a reverse proxy with a strict read timeout
-            # (e.g. Nginx default proxy_read_timeout 60s or Cloudflare 100s timeout), setting this to "20s"
-            # is strongly recommended to guarantee headers commit well before proxy timeouts while retaining
-            # a comfortable 20s window to fail over early scheduling overloads.
-            # Note: The timeout check is evaluated as upstream frames arrive; it never aborts the upstream
-            # connection. Downstream headers are committed as soon as the downstream translator emits chunks
-            # (for formats that render handshake/heartbeats, headers commit immediately on release; for
-            # formats like Chat Completions and Gemini that render nothing until the first text token, headers
-            # commit when that first token arrives).
-            # When unset or set to "0", "0s", "none", "unlimited", "disabled", "off", or "never", no time ceiling
-            # is applied, and buffering relies purely on the 48-frame and 1MB byte budget.
-            # Default: "0" (unlimited)
-            optimize-multi-agent-v2: false
-            # When true, optimize Codex Desktop, codex-tui, and codex_cli_rs requests for multi-agent v2.
-            # This refreshes Codex spawn_agent model details, removes message parameter encryption,
-            # normalizes encrypted agent_message content for Codex, and converts agent_message input
-            # into standard user messages for non-Codex upstream protocols.
-            orphan-delegation-compatibility: false
-            # When true, enable opt-in compatibility for orphan Codex delegation outputs.
-            # Converts orphan function_call_output items from codex_app/create_thread and
-            # codex_app/send_message_to_thread (which lack a valid call_id or matching function_call)
-            # into standard user messages across Responses and non-Codex protocols when the request
-            # header contains X-Openai-Subagent: collab_spawn.
-            model-level-cooling: false
             # When true, scope Codex usage_limit_reached quota cooldowns to the requested model rather
             # than cooling down the entire credential across all sibling models.
             # Default: false
@@ -353,7 +263,6 @@ oauth:
                 #       - "turn:turn.example.com:3478?transport=udp"
                 #     username: "user"
                 #     credential: "secret"
-            response-steering: false
             # Experimental full-duplex Codex Responses WebSocket steering (default: false).
             # Keeps one upstream account/model per socket; accepted input is never replayed.
             # See STEERING.md for limitations.
@@ -385,23 +294,6 @@ oauth:
                     suffixes: []
                     # Leave either list empty to disable that marker type. If both are empty
                     # while use-prefix-suffix is true, no model can opt in to private mode.
-        xai:
-            inject-x-search: false
-            # When true, inject the native x_search tool when the request does not declare it.
-            # The injected tool is also added to tool_choice.allowed_tools when applicable.
-            auto-disable-permission-denied: true
-            # Disable an auth file permanently when xAI explicitly denies chat access/permission,
-            # or when HTTP 401 remains after the one-shot OAuth refresh retry (bearer keys with no
-            # refresh credential disable immediately). Error body is saved as disabled_reason.
-            other-403-cooldown-hours: 6
-            # Model cooldown for other xAI HTTP 403 responses. Set 0 to keep the model immediately eligible.
-            free-usage-exhausted-cooldown-hours: 24
-            # Model cooldown for subscription:free-usage-exhausted. Set 0 to keep the model immediately eligible.
-            free-usage-exhausted-disable-after: 3
-            # After this many free-usage exhaustion events (first hit + post-cooldown re-hits), disable the
-            # auth file. Counters persist in the auth JSON runtime block. Set 0 to never auto-disable.
-            other-403-disable-after: 3
-            # Same repeated-exhaustion disable threshold for other (non permission-denied) xAI 403 responses.
         qoder:
             auto-disable-inactive-token: true
             # Disable an auth file only when Qoder explicitly reports an inactive token (HTTP 401).
@@ -462,8 +354,8 @@ management:
     # Disable automatic periodic background updates of the management panel from GitHub (default: false).
     # When enabled, the panel is only downloaded on first access if missing, and never auto-updated afterward.
     # disable-auto-update-panel: false
+# GitHub repository for the management control panel. Accepts a repository URL or releases API URL.
 
-    # GitHub repository for the management control panel. Accepts a repository URL or releases API URL.
 observability:
     logs:
         debug: false
@@ -493,6 +385,118 @@ observability:
         # The local Redis RESP usage output is disabled.
         # Default: 60. Max: 3600.
 config-version: 8
+client:
+    codex:
+        # Optional maximum duration to hold back uncommitted response headers during bootstrap buffering.
+        # When set (e.g. "20s"), if the time ceiling is reached before the first generated token,
+        # the stream is released to the client and further in-stream overloads are delivered rather
+        # than failed over. This bounds how long trickled heartbeats or early empty frames can delay
+        # response headers before streaming begins.
+        # Recommendation: If your CPA is deployed behind a reverse proxy with a strict read timeout
+        # (e.g. Nginx default proxy_read_timeout 60s or Cloudflare 100s timeout), setting this to "20s"
+        # is strongly recommended to guarantee headers commit well before proxy timeouts while retaining
+        # a comfortable 20s window to fail over early scheduling overloads.
+        # Note: The timeout check is evaluated as upstream frames arrive; it never aborts the upstream
+        # connection. Downstream headers are committed as soon as the downstream translator emits chunks
+        # (for formats that render handshake/heartbeats, headers commit immediately on release; for
+        # formats like Chat Completions and Gemini that render nothing until the first text token, headers
+        # commit when that first token arrives).
+        # When unset or set to "0", "0s", "none", "unlimited", "disabled", "off", or "never", no time ceiling
+        # is applied, and buffering relies purely on the 48-frame and 1MB byte budget.
+        # Default: "0" (unlimited)
+        optimize-multi-agent-v2: false
+upstream:
+    codex:
+        disable-codex-cloaking: false
+        # Disable forcing the official Codex User-Agent and Originator headers on HTTP/SSE and WebSocket requests.
+        stream-bootstrap-buffering: false
+        # Hold back the frames that carry nothing the client has seen - the handshake (response.created,
+        # response.in_progress, the websocket metadata frames), keepalive heartbeats, and the *.added
+        # announcements of an item or part that is still empty - until the upstream emits its first
+        # generated event. Anything else, including a server-side tool item such as web_search_call and
+        # any frame not on that list, releases the stream immediately. On the SSE transport the lines that
+        # are not `data:` frames - comments, `event:` lines, blank separators - are held alongside them.
+        # The hold is bounded by a frame budget and a 1 MiB byte budget, not by wall-clock time: an
+        # upstream that trickles frames holds the response headers for as long as the client will wait.
+        # Why: the upstream smuggles `server_is_overloaded` rejections *inside* an HTTP 200 stream,
+        # right after those handshake events, instead of returning 503 on the wire. Buffering them
+        # keeps the downstream response headers uncommitted long enough to transparently retry on
+        # another credential. Only overload/rate-limit rejections trigger failover; every other terminal
+        # failure is still delivered in-stream exactly as before. One pre-existing behaviour is worth
+        # knowing, because this option makes the window it lives in much longer: if the stream ends while
+        # the bootstrap is still holding, the attempt ends instead of the error reaching the client, and
+        # whether another credential is then tried depends on how it ended. A clean end with no terminal
+        # event is request-scoped on SSE, so nothing else is tried; a websocket close, or a transport error
+        # such as a dropped connection on either transport, is not, so the request may be retried on
+        # another credential. None of that is new, but before this option the hold ended at the first
+        # keepalive, so it was rare; now it can span the whole reasoning phase.
+        # Trade-off: response headers are delayed until generation starts. Because heartbeats are held
+        # too, the delay now ends at the first generated token rather than at the first heartbeat. The
+        # budget bounds how much is held, not how long: 48 SSE lines, which measures out as 15 heartbeats
+        # of the three-line event:/data:/blank shape, 23 of a two-line ": keepalive" comment followed by
+        # its blank separator, or 47 of a bare ": keepalive" with no separator - one short of the obvious
+        # division, because the rejection frame's own event: line comes out of the same budget before its
+        # data: line is parsed. An upstream that sends the rejection as a bare data: line with no event:
+        # line gets the round number instead. At a 10s upstream heartbeat that is 150s, 230s or 470s of
+        # uncommitted response headers depending on the framing the upstream picks, all of it past nginx's
+        # 60s default proxy_read_timeout, so raise the timeouts in front of the proxy before enabling this.
+        # Those seconds bound what the buffer holds, not when the response headers are committed. Headers
+        # are committed on the first chunk the downstream translator actually produces, so for a format
+        # that renders the handshake as nothing - Chat Completions and Gemini do - they stay uncommitted
+        # past the budget, until the first generated token. That is not specific to the budget: any frame
+        # that releases the buffer has always behaved this way.
+        # The websocket transport spends the same 48 differently - one per message read, whether the loop
+        # holds it or skips it, with no framing to divide by - so there it is 48 heartbeats, about 480s.
+        # Two cases no budget covers: a websocket peer that sends only ping frames, which the library
+        # answers inside the read call, leaving only the 5 minute websocket read deadline; and an upstream
+        # that stops mid-line on SSE, where the scanner never returns and only the request context ends the
+        # wait. Neither is made worse by this option - with it off the same stalled line stalls the
+        # conductor instead, which waits on the same context - but a client-side request timeout, not
+        # proxy_read_timeout, is what bounds them.
+        # Default: false
+        stream-bootstrap-timeout: "0"
+        # When true, optimize Codex Desktop, codex-tui, and codex_cli_rs requests for multi-agent v2.
+        # This refreshes Codex spawn_agent model details, removes message parameter encryption,
+        # normalizes encrypted agent_message content for Codex, and converts agent_message input
+        # into standard user messages for non-Codex upstream protocols.
+        orphan-delegation-compatibility: false
+        # When true, enable opt-in compatibility for orphan Codex delegation outputs.
+        # Converts orphan function_call_output items from codex_app/create_thread and
+        # codex_app/send_message_to_thread (which lack a valid call_id or matching function_call)
+        # into standard user messages across Responses and non-Codex protocols when the request
+        # header contains X-Openai-Subagent: collab_spawn.
+        model-level-cooling: false
+        response-steering: false
+    claude:
+        model-level-cooling: false
+        disable-cloaking-model-list: false
+        # When true, return original model IDs in Anthropic model list responses instead of cloaked IDs.
+
+        # When true, scope quota cooldowns to the requested model rather than cooling down
+        # the entire credential across all sibling models. Default is false.
+        disable-claude-cloak-mode: false
+        # When true, globally disable Claude request cloaking (the Claude Code CLI disguise and
+        # system prompt replacement), so the original system prompt is passed through to Claude as-is.
+        # Individual credentials can still override this: a claude-api-key entry via its "cloak.mode",
+        # or a Claude OAuth/token file via a "cloak_mode" value. Default false keeps the per-client
+        # "auto" behavior (cloak only non-Claude-Code clients).
+    xai:
+        inject-x-search: false
+        # When true, inject the native x_search tool when the request does not declare it.
+        # The injected tool is also added to tool_choice.allowed_tools when applicable.
+        auto-disable-permission-denied: true
+        # Disable an auth file permanently when xAI explicitly denies chat access/permission,
+        # or when HTTP 401 remains after the one-shot OAuth refresh retry (bearer keys with no
+        # refresh credential disable immediately). Error body is saved as disabled_reason.
+        other-403-cooldown-hours: 6
+        # Model cooldown for other xAI HTTP 403 responses. Set 0 to keep the model immediately eligible.
+        free-usage-exhausted-cooldown-hours: 24
+        # Model cooldown for subscription:free-usage-exhausted. Set 0 to keep the model immediately eligible.
+        free-usage-exhausted-disable-after: 3
+        # After this many free-usage exhaustion events (first hit + post-cooldown re-hits), disable the
+        # auth file. Counters persist in the auth JSON runtime block. Set 0 to never auto-disable.
+        other-403-disable-after: 3
+        # Same repeated-exhaustion disable threshold for other (non permission-denied) xAI 403 responses.
 
 # Signature cache validation for thinking blocks (Antigravity/Claude).
 # When true (default), cached signatures are preferred and validated.

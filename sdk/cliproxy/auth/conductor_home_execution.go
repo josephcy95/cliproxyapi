@@ -118,7 +118,7 @@ func (m *Manager) executeHome(ctx context.Context, providers []string, req clipr
 			}
 			execReq = attachResolvedExecutionModelInfo(routing, execReq, preparedAuth, routeModel, upstreamModel, restoreExecutionModel)
 			if !restoreExecutionModel {
-				execReq = attachResolvedHomeModelInfo(execReq, selection.modelInfo, selection.configurationUpdateSupport)
+				execReq = attachResolvedHomeModelInfo(execReq, preparedAuth, routeModel, selection.modelInfo, selection.configurationUpdateSupport)
 			}
 			if errCtx := execCtx.Err(); errCtx != nil {
 				releaseAttempt()

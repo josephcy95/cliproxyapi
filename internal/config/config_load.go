@@ -142,6 +142,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		cfg.MaxRetryCredentials = 0
 	}
 
+	cfg.Desensitization = NormalizeDesensitizationConfig(cfg.Desensitization)
 	cfg.NormalizePluginsConfig()
 	if errResolvePluginsDir := cfg.ResolvePluginsDir(); errResolvePluginsDir != nil && cfg.Plugins.Enabled {
 		return nil, errResolvePluginsDir
@@ -188,6 +189,11 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Normalize global OAuth model name aliases.
 	cfg.SanitizeOAuthModelAlias()
+
+	// Normalize global OAuth model settings.
+	cfg.SanitizeOAuthSettings()
+
+	// Normalize global OAuth request-scoped error rules.
 	cfg.SanitizeOAuthRequestScopedErrors()
 
 	// Normalize manual model context window overrides.

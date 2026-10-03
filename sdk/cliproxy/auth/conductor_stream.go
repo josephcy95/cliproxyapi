@@ -271,7 +271,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		execReq = attachResolvedExecutionModelInfo(routing, execReq, auth, routeModel, execModel, executionModel != "")
 		if executionModel == "" {
 			if selection, ok := opts.ExecutionLifecycle.(*HomeDispatchSelection); ok && selection != nil {
-				execReq = attachResolvedHomeModelInfo(execReq, selection.modelInfo, selection.configurationUpdateSupport)
+				execReq = attachResolvedHomeModelInfo(execReq, auth, routeModel, selection.modelInfo, selection.configurationUpdateSupport)
 			}
 		}
 		if errCtx := ctx.Err(); errCtx != nil {

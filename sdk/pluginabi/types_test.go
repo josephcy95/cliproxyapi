@@ -106,6 +106,9 @@ func TestMethodNamesAreStable(t *testing.T) {
 	if MethodHostAuthSave != "host.auth.save" {
 		t.Fatalf("MethodHostAuthSave = %q", MethodHostAuthSave)
 	}
+	if MethodHostRoutingResetCooldown != "host.routing.reset_cooldown" {
+		t.Fatalf("MethodHostRoutingResetCooldown = %q", MethodHostRoutingResetCooldown)
+	}
 	if MethodExecutorExecuteStream != "executor.execute_stream" {
 		t.Fatalf("MethodExecutorExecuteStream = %q", MethodExecutorExecuteStream)
 	}

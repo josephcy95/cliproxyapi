@@ -306,7 +306,7 @@ func codexPlanTypeFromMetadata(metadata map[string]any) string {
 	if errParse != nil || claims == nil {
 		return ""
 	}
-	return strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType)
+	return claims.GetPlanType()
 }
 
 func metadataString(metadata map[string]any, key string) string {

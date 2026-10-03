@@ -210,6 +210,8 @@ type Config struct {
 	// Note: no omitempty. Emptying the list must be written to disk, otherwise a
 	// deleted override would silently survive in the on-disk config.
 	ModelContextOverrides []ModelContextOverride `yaml:"model-context-overrides" json:"model-context-overrides"`
+	// OAuthSettings defines per-channel model settings (such as max-context-length) applied to OAuth/file-backed auth entries.
+	OAuthSettings map[string][]OAuthModelSetting `yaml:"oauth-settings,omitempty" json:"oauth-settings,omitempty"`
 
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -221,6 +222,14 @@ func applyRequestAfterAuthInterceptor(ctx context.Context, executor ProviderExec
 	if len(resp.Body) > 0 {
 		req.Payload = bytes.Clone(resp.Body)
 		opts.OriginalRequest = bytes.Clone(resp.Body)
+	}
+	if path := strings.TrimSpace(resp.Path); path != "" {
+		if opts.Metadata == nil {
+			opts.Metadata = make(map[string]any, 1)
+		} else {
+			opts.Metadata = maps.Clone(opts.Metadata)
+		}
+		opts.Metadata[cliproxyexecutor.RequestPathMetadataKey] = path
 	}
 	if resp.Terminate {
 		return req, opts, &cliproxyexecutor.RequestTerminatedError{
@@ -829,7 +838,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		}
 		execReq := sanitizeDownstreamWebsocketFallbackRequest(execCtx, auth, req)
 		if selection != nil && !restoreExecutionModel {
-			execReq = attachResolvedHomeModelInfo(execReq, selection.modelInfo, selection.configurationUpdateSupport)
+			execReq = attachResolvedHomeModelInfo(execReq, auth, routeModel, selection.modelInfo, selection.configurationUpdateSupport)
 		}
 		streamExecutionModel := ""
 		if restoreExecutionModel {
@@ -1048,7 +1057,7 @@ func (m *Manager) prepareHomeAuthSnapshot(ctx context.Context, executor Provider
 		if !preparer.ShouldPrepareRequestAuth(target) {
 			return target, nil
 		}
-		updated, errPrepare := preparer.PrepareRequestAuth(ctx, target)
+		updated, errPrepare := preparer.PrepareRequestAuth(ctx, target.Clone())
 		if errPrepare != nil {
 			return auth, errPrepare
 		}
@@ -1123,7 +1132,7 @@ func (m *Manager) PrepareRequestAuth(ctx context.Context, preparer RequestAuthPr
 		return target, nil
 	}
 
-	updated, errPrepare := preparer.PrepareRequestAuth(ctx, target)
+	updated, errPrepare := preparer.PrepareRequestAuth(ctx, target.Clone())
 	if errPrepare != nil {
 		return auth, errPrepare
 	}
