@@ -163,6 +163,8 @@ func (s *Service) refreshPluginModelRegistrations(ctx context.Context) {
 	if s == nil || s.pluginHost == nil || s.coreManager == nil {
 		return
 	}
+	// Native capability probes publish and refresh their scheduler entries
+	// asynchronously; startup and config updates must not wait for network I/O.
 	s.registerModelsForAuthBatch(ctx, s.coreManager.List())
 }
 

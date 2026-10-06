@@ -160,6 +160,11 @@ func (m *Manager) probeCodexQuota(ctx context.Context, auth *Auth) (*Auth, error
 		}
 	}
 
+	releaseMutation, errMutation := m.lockAuthMutationContext(ctx, auth.ID)
+	if errMutation != nil {
+		return nil, errMutation
+	}
+	defer releaseMutation()
 	m.mu.Lock()
 	current := m.auths[auth.ID]
 	if current == nil {
@@ -175,14 +180,17 @@ func (m *Manager) probeCodexQuota(ctx context.Context, auth *Auth) (*Auth, error
 			current.Metadata[key] = value
 		}
 	}
+	current.Generation++
 	current.UpdatedAt = time.Now()
+	errPersist := m.persistLocked(ctx, current)
 	result := current.Clone()
 	m.mu.Unlock()
+	releaseMutation()
 
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(result)
 	}
-	if errPersist := m.persist(ctx, result); errPersist != nil {
+	if errPersist != nil {
 		return result, errPersist
 	}
 	return result, nil

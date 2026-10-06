@@ -25,6 +25,17 @@
 #   max-details: 10000
 #   max-string-bytes: 256
 #   staging-retention: 1m
+# Optional model catalog sources: http(s) URLs or absolute local file paths.
+# Each explicit source overrides --local-model; otherwise --local-model uses
+# embedded catalogs, and normal mode uses the official remote sources.
+# Failed refreshes retain the last valid catalog; custom sources never fall back
+# to official URLs. Files and URLs are refreshed every 3 hours and on source changes.
+# Home mode never loads the general catalog, even when explicitly configured.
+models:
+  catalog: ""
+  codex-catalog: ""
+  devin-catalog: ""
+
 
 # Standard dynamic library plugins are trusted in-process code. They are disabled by default.
 # Build Go examples with go build -buildmode=c-shared for the target GOOS/GOARCH.

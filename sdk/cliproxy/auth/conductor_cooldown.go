@@ -491,6 +491,8 @@ func (m *Manager) resetQuotaBefore(ctx context.Context, authID string, usageLimi
 	registeredModels := modelsForRegisteredAuth(authID)
 	cooldownStateChanged := false
 
+	releaseMutation := m.lockAuthMutation(authID)
+	defer releaseMutation()
 	m.mu.Lock()
 	auth, ok := m.auths[authID]
 	if !ok || auth == nil {
@@ -557,7 +559,7 @@ func (m *Manager) resetQuotaBefore(ctx context.Context, authID string, usageLimi
 		syncAuthRuntimeMetadata(auth, now)
 	}
 	auth.UpdatedAt = now
-	if errPersist := m.persist(ctx, auth); errPersist != nil {
+	if errPersist := m.persistLocked(ctx, auth); errPersist != nil {
 		m.mu.Unlock()
 		return nil, nil, errPersist
 	}
@@ -567,6 +569,7 @@ func (m *Manager) resetQuotaBefore(ctx context.Context, authID string, usageLimi
 		cooldownStateChanged = !cooldownStateRecordsEqual(cooldownRecordsBefore, cooldownRecordsAfter)
 	}
 	m.mu.Unlock()
+	releaseMutation()
 
 	for _, modelKey := range models {
 		canonicalModel := canonicalModelKey(modelKey)
@@ -580,10 +583,12 @@ func (m *Manager) resetQuotaBefore(ctx context.Context, authID string, usageLimi
 		m.scheduler.upsertAuth(snapshot)
 	}
 	if snapshot != nil && cooldownStateChanged && !m.persistCooldownStates(ctx) {
+		releaseRollback := m.lockAuthMutation(authID)
 		m.mu.Lock()
 		m.auths[authID] = original.Clone()
-		errPersist := m.persist(ctx, original)
+		errPersist := m.persistLocked(ctx, m.auths[authID])
 		m.mu.Unlock()
+		releaseRollback()
 		if m.scheduler != nil {
 			m.scheduler.upsertAuth(original)
 		}
@@ -855,6 +860,8 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	var authSnapshot *Auth
 	cooldownStateChanged := false
 
+	releaseMutation := m.lockAuthMutation(result.AuthID)
+	defer releaseMutation()
 	m.mu.Lock()
 	if auth, ok := m.auths[result.AuthID]; ok && auth != nil {
 		now := time.Now()
@@ -1186,6 +1193,15 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		if auth.Metadata != nil {
 			syncAuthRuntimeMetadata(auth, now)
 		}
+
+		// Publish availability before disk I/O so blocked persistence cannot route
+		// another request to a credential that just entered cooldown.
+		if m.scheduler != nil {
+			m.scheduler.upsertAuth(auth.Clone())
+		}
+		if errPersist := m.persistLocked(ctx, auth); errPersist != nil {
+			logEntryWithRequestID(ctx).WithField("auth_id", auth.ID).Warnf("failed to persist auth result: %v", errPersist)
+		}
 		authSnapshot = auth.Clone()
 		if trackCooldownState {
 			cooldownRecordsAfter := m.cooldownStateRecordsForAuthLocked(auth, now)
@@ -1193,6 +1209,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		}
 	}
 	m.mu.Unlock()
+	releaseMutation()
 	if m.scheduler != nil && authSnapshot != nil {
 		m.scheduler.upsertAuth(authSnapshot)
 	}
@@ -1210,11 +1227,6 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		registry.GetGlobalRegistry().ResumeClientModel(result.AuthID, modelKey)
 	} else if shouldSuspendModel {
 		registry.GetGlobalRegistry().SuspendClientModel(result.AuthID, modelKey, suspendReason)
-	}
-	if authSnapshot != nil {
-		if errPersist := m.persist(ctx, authSnapshot); errPersist != nil {
-			logEntryWithRequestID(ctx).WithField("auth_id", authSnapshot.ID).Warnf("failed to persist auth result: %v", errPersist)
-		}
 	}
 	stateLock.Unlock()
 
@@ -1263,6 +1275,8 @@ func (m *Manager) recordAvailabilityNeutralResult(ctx context.Context, result Re
 	m.observeCodexAdaptiveResult(result)
 
 	var authSnapshot *Auth
+	releaseMutation := m.lockAuthMutation(result.AuthID)
+	defer releaseMutation()
 	m.mu.Lock()
 	if auth, ok := m.auths[result.AuthID]; ok && auth != nil {
 		now := time.Now()
@@ -1272,10 +1286,15 @@ func (m *Manager) recordAvailabilityNeutralResult(ctx context.Context, result Re
 		} else {
 			auth.Failed++
 		}
-		_ = m.persist(ctx, auth)
+		auth.Generation++
+		auth.UpdatedAt = now
+		if errPersist := m.persistLocked(ctx, auth); errPersist != nil {
+			logEntryWithRequestID(ctx).WithField("auth_id", auth.ID).Warnf("failed to persist auth result: %v", errPersist)
+		}
 		authSnapshot = auth.Clone()
 	}
 	m.mu.Unlock()
+	releaseMutation()
 
 	m.hook.OnResult(ctx, result)
 	m.publishErrorEvent(result, authSnapshot)

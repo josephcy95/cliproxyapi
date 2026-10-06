@@ -752,15 +752,34 @@ func TestHandleAuthUpdates_SameRevisionWaitDoesNotWaitForOtherAuthInBatch(t *tes
 		t.Fatal("second auth registration in batch did not start")
 	}
 
+	// Workers may start B before A. Repeat the completed account's revision,
+	// rather than assuming the first scheduled task always belongs to A.
+	completedUpdate := updateA
+	waitA := service.authRegistrationWaitCh(authAID)
+	waitB := service.authRegistrationWaitCh(authBID)
+	if waitA != nil {
+		if waitB == nil {
+			completedUpdate = updateB
+		} else {
+			select {
+			case <-waitA:
+			case <-waitB:
+				completedUpdate = updateB
+			case <-time.After(2 * time.Second):
+				t.Fatal("neither registration completed while the other was blocked")
+			}
+		}
+	}
+
 	doneA := make(chan struct{})
 	go func() {
-		service.handleAuthUpdate(context.Background(), updateA)
+		service.handleAuthUpdate(context.Background(), completedUpdate)
 		close(doneA)
 	}()
 	select {
 	case <-doneA:
 	case <-time.After(2 * time.Second):
-		t.Fatal("auth A hook wait blocked on unrelated auth B registration")
+		t.Fatal("completed auth hook wait blocked on unrelated auth registration")
 	}
 
 	close(bBlock)

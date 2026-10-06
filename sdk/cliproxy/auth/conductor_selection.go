@@ -245,7 +245,9 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 		return
 	}
 
-	supportedModels := registry.GetGlobalRegistry().GetModelsForClient(authID)
+	releaseMutation := m.lockAuthMutation(authID)
+	defer releaseMutation()
+	supportedModels, regEpoch := registry.GetGlobalRegistry().GetModelsAndEpochForClient(authID)
 	supported := make(map[string]struct{}, len(supportedModels))
 	for _, model := range supportedModels {
 		if model == nil {
@@ -258,17 +260,6 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 		supported[modelKey] = struct{}{}
 	}
 
-	registryModelIDs := make(map[string]string, len(supportedModels))
-	for _, model := range supportedModels {
-		if model == nil {
-			continue
-		}
-		modelKey := canonicalModelKey(model.ID)
-		if modelKey != "" {
-			registryModelIDs[modelKey] = model.ID
-		}
-	}
-
 	var snapshot *Auth
 	changed := false
 	now := time.Now()
@@ -276,12 +267,17 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 	m.mu.Lock()
 	auth, ok := m.auths[authID]
 	if ok && auth != nil && len(auth.ModelStates) > 0 {
+		for _, model := range supportedModels {
+			if model != nil {
+				supported[m.selectionModelKeyForAuth(auth, model.ID)] = struct{}{}
+			}
+		}
 		for modelKey := range auth.ModelStates {
 			baseModel := canonicalModelKey(modelKey)
 			if baseModel == "" {
 				baseModel = strings.TrimSpace(modelKey)
 			}
-			if len(supported) > 0 {
+			if len(supported) > 0 || (strings.EqualFold(auth.Provider, "antigravity") && regEpoch > 0) {
 				if _, supportedModel := supported[baseModel]; supportedModel {
 					continue
 				}
@@ -297,47 +293,48 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 		}
 		if changed {
 			updateAggregatedAvailability(auth, now)
-			if !hasModelError(auth, now) {
+			if !hasModelError(auth, now) && !hasUnauthorizedAuthFailure(auth) {
 				auth.LastError = nil
 				auth.StatusMessage = ""
 				auth.Status = StatusActive
 			}
+			auth.Generation++
 			auth.UpdatedAt = now
 		}
 		if auth.Metadata != nil {
 			syncAuthRuntimeMetadata(auth, now)
 		}
+		if changed {
+			if errPersist := m.persistLocked(ctx, auth); errPersist != nil {
+				logEntryWithRequestID(ctx).WithField("auth_id", auth.ID).Warnf("failed to persist auth changes during model state reconciliation: %v", errPersist)
+			}
+		}
+		// Fence model availability at the current auth generation, including empty
+		// authoritative catalogs, so older request snapshots cannot restore it.
+		projections := make([]registry.ClientModelProjection, 0, len(supportedModels))
+		for _, model := range supportedModels {
+			if model == nil {
+				continue
+			}
+			stateKey := m.selectionModelKeyForAuth(auth, model.ID)
+			state := auth.ModelStates[stateKey]
+			projection := registry.ClientModelProjection{ModelID: model.ID}
+			if state != nil && (state.NextRetryAfter.After(now) || state.Quota.NextRecoverAt.After(now)) {
+				projection.QuotaExceeded = state.Quota.Exceeded
+				projection.Suspended = state.Unavailable
+				projection.SuspendReason = cooldownReason(state.StatusMessage, state.Quota, state.LastError)
+			}
+			projections = append(projections, projection)
+		}
+		reg := registry.GetGlobalRegistry()
+		reg.ApplyClientModelProjections(auth.ID, regEpoch, auth.Generation, projections)
 		snapshot = auth.Clone()
 	}
 	m.mu.Unlock()
+	releaseMutation()
 
-	if snapshot != nil {
-		for modelKey, state := range snapshot.ModelStates {
-			if state == nil || !state.Unavailable || state.NextRetryAfter.IsZero() || !state.NextRetryAfter.After(now) {
-				continue
-			}
-			baseModel := canonicalModelKey(modelKey)
-			registryModelID := registryModelIDs[baseModel]
-			if registryModelID == "" {
-				continue
-			}
-			if state.Quota.Exceeded {
-				registry.GetGlobalRegistry().SetModelQuotaExceeded(authID, registryModelID)
-			}
-			reason := strings.TrimSpace(state.Quota.Reason)
-			if reason == "" {
-				reason = strings.TrimSpace(state.StatusMessage)
-			}
-			registry.GetGlobalRegistry().SuspendClientModel(authID, registryModelID, reason)
-		}
-	}
 	if m.scheduler != nil && snapshot != nil {
 		m.scheduler.upsertAuth(snapshot)
-	}
-	if changed && snapshot != nil {
-		if errPersist := m.persist(ctx, snapshot); errPersist != nil {
-			logEntryWithRequestID(ctx).WithField("auth_id", snapshot.ID).Warnf("failed to persist auth changes during model state reconciliation: %v", errPersist)
-		}
 	}
 }
 
