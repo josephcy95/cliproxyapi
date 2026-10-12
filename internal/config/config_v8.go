@@ -71,7 +71,7 @@ var v8KeyFamilies = []configPath{
 	{"vertex-api-key", "vertex"}, {"codex-api-key", "codex"},
 	{"claude-api-key", "claude"}, {"xai-api-key", "xai"}, {"meta-api-key", "meta"},
 	{"openai-compatibility", "openai-compatibility"},
-	{"commandcode-api-key", "commandcode"}, {"excel-api-key", "excel"},
+	{"commandcode-api-key", "commandcode"},
 }
 
 func buildV8Paths() []configPath {
@@ -155,6 +155,14 @@ func buildV8Paths() []configPath {
 	}
 	walk(reflect.TypeOf(Config{}), "", nil)
 	return out
+}
+
+// pruneRetiredProviderConfig removes discontinued route settings at YAML boundaries.
+// Other provider groups and frontend access keys retain their existing semantics.
+func pruneRetiredProviderConfig(root *yaml.Node) bool {
+	legacy := deleteYAMLPath(root, "excel-api-key")
+	canonical := deleteYAMLPath(root, "api-keys.excel")
+	return legacy || canonical
 }
 
 func yamlPath(root *yaml.Node, path string) *yaml.Node {
@@ -286,6 +294,7 @@ func flattenV8(node *yaml.Node) (*yaml.Node, error) {
 		return nil, err
 	}
 	node = expandConfigAliases(node)
+	pruneRetiredProviderConfig(node)
 	if _, err := normalizeV8PrivateIPAlias(node, true); err != nil {
 		return nil, err
 	}
@@ -478,7 +487,9 @@ func NormalizeConfigLayout(data []byte, migrate bool) ([]byte, bool, error) {
 	}
 	root = expandConfigAliases(root)
 	doc.Content[0] = root
+	retired := pruneRetiredProviderConfig(root)
 	changed, err := normalizeV8PrivateIPAlias(root, migrate)
+	changed = changed || retired
 	if err != nil {
 		return nil, false, err
 	}
@@ -875,6 +886,7 @@ func ValidateV8Config(data []byte) error {
 		return err
 	}
 	root = expandConfigAliases(root)
+	pruneRetiredProviderConfig(root)
 	allowedRoots := v8AllowedRoots()
 	for _, path := range append(append(append([]configPath(nil), v8Paths...), v8Aliases...), v8SharedStructPaths...) {
 		if legacyPath(root, path.old) != nil {

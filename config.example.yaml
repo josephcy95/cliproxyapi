@@ -916,45 +916,6 @@ upstream:
 #         thinking:                              # optional: exact thinking capability for this configured model
 #           levels: ["low", "medium", "high"]
 
-# ChatGPT Excel models (Codex Responses clients served from the Excel add-in backend).
-#
-# These are ordinary Codex models for routing, credential selection, usage
-# recording, cooldown and the model list; only the upstream conversation differs.
-# The backend accepts the same ChatGPT OAuth token family as the Codex provider
-# but does not apply the public endpoint's automatic model routing, so the
-# requested model is not silently substituted. It reuses the Codex credentials
-# already loaded -- no extra sign-in. These temporary, unofficial routes are
-# restricted to non-free Codex OAuth auth files. API keys (including entries on
-# /ai-providers), other providers, free plans, and unknown plans are ineligible.
-#
-# Absent means off. Present means on.
-#
-# The equivalent Management Center switch writes exactly this:
-# excel-api-key:
-#   - {}
-#
-# Optional overrides:
-# excel-api-key:
-#   - base-url: "https://bps.openai.com"   # optional; this is the default origin
-#     headers: {}                          # optional: add-in identity header overrides
-#     models:                              # optional: replace the built-in alias list
-#       - name: "gpt-5.6-sol"              # upstream model slug
-#         alias: "gpt-5.6-sol-excel"
-#         display-name: "5.6-Sol Excel"
-#         max-context-length: 272000
-#         thinking:
-#           levels: ["low", "medium", "high", "xhigh"]
-#
-# Note: this backend rejects the "max", "minimal" and "ultra" reasoning efforts
-# (they fall back to "medium"), and injects a spreadsheet system prompt that a
-# caller's own instructions override.
-#
-# Each alias advertises the same context window, maximum context window and token
-# limits as the public Codex model it maps onto, so the alias is never narrower
-# than the ordinary route. Built-in aliases cover gpt-6-astra, gpt-6-sol,
-# gpt-6-luna, gpt-5.6-luna, gpt-5.6-terra and gpt-5.6-sol (there is no
-# gpt-6-terra).
-
 # Vertex API keys (Vertex-compatible endpoints, base-url is optional)
 # vertex-api-key:
 #   - api-key: "vk-123..."                        # x-goog-api-key header

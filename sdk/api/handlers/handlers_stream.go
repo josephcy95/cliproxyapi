@@ -329,7 +329,6 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
 	}
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
-	applyModelAuthPolicy(reqMeta, originalRequestedModel)
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	normalizedModel, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, normalizedModel, reqMeta)
 	if selectionModel := strings.TrimSpace(execOptions.AuthSelectionModel); selectionModel != "" {

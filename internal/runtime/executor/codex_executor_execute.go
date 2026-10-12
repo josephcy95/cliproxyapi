@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -21,16 +20,13 @@ import (
 
 func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
-	if opts.Alt == "responses/compact" && !excel.IsAlias(thinking.ParseSuffix(req.Model).ModelName) {
+	if opts.Alt == "responses/compact" {
 		return e.executeCompact(ctx, auth, req, opts)
 	}
 	if isCodexOpenAIImageRequest(opts) {
 		return e.executeOpenAIImage(ctx, auth, req, opts)
 	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
-	if excel.IsAlias(baseModel) {
-		return e.executeExcel(ctx, auth, req, opts, baseModel)
-	}
 
 	apiKey, baseURL := codexCreds(auth)
 	if errSIWC := ensureCodexSIWCCredentials(auth, apiKey); errSIWC != nil {

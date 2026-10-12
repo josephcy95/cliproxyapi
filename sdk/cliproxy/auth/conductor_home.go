@@ -777,10 +777,6 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 		return nil, errRetained
 	}
 	if retainedOK {
-		if e := m.authSelectionEligibilityForManager(ctx, opts, requestedModel); e.requireExcelOAuth && !retained.CloneAuth().ExcelEligible() {
-			retained.End("excel_ineligible_auth")
-			return nil, &Error{Code: "invalid_auth", Message: "Excel routes require a non-free Codex OAuth auth file", HTTPStatus: http.StatusForbidden}
-		}
 		return retained, nil
 	}
 	if sessionID := homeExecutionSessionIDFromMetadata(opts.Metadata); sessionID != "" {
@@ -913,10 +909,6 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 			endScope()
 			return nil, &Error{Code: "invalid_auth", Message: "home returned invalid auth payload", HTTPStatus: http.StatusBadGateway}
 		}
-	}
-	if e := m.authSelectionEligibilityForManager(ctx, opts, requestedModel, dispatch.Model); e.requireExcelOAuth && !auth.ExcelEligible() {
-		endScope()
-		return nil, &Error{Code: "invalid_auth", Message: "Excel routes require a non-free Codex OAuth auth file", HTTPStatus: http.StatusForbidden}
 	}
 	observedModel := canonicalHomeDispatchModel(dispatch.Model, requestedModel)
 	if envelope.Present {

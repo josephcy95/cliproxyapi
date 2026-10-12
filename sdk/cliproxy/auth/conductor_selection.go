@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -76,7 +75,6 @@ type requiredAuthKindContextKey struct{}
 type credentialPolicyContextKey struct{}
 
 type authSelectionEligibility struct {
-	requireExcelOAuth    bool
 	requiredKind         string
 	credentialPolicy     string
 	disallowFreeAuth     bool
@@ -110,15 +108,6 @@ func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecut
 		// Default matches codexInstructionsSelectionConfig(nil): require allow flag.
 		requireAuthAllow: true,
 	}
-	for _, model := range models {
-		eligibility.requireExcelOAuth = eligibility.requireExcelOAuth || excel.IsRoute(model)
-	}
-	if requested, ok := opts.Metadata[cliproxyexecutor.RequestedModelMetadataKey].(string); ok {
-		eligibility.requireExcelOAuth = eligibility.requireExcelOAuth || excel.IsRoute(requested)
-	}
-	if required, _ := opts.Metadata[cliproxyexecutor.RequireExcelOAuthMetadataKey].(bool); required {
-		eligibility.requireExcelOAuth = true
-	}
 	if ctx != nil {
 		eligibility.requiredKind, _ = ctx.Value(requiredAuthKindContextKey{}).(string)
 		eligibility.credentialPolicy, _ = ctx.Value(credentialPolicyContextKey{}).(string)
@@ -136,9 +125,6 @@ func (m *Manager) authSelectionEligibilityForManager(ctx context.Context, opts c
 
 func (e authSelectionEligibility) allows(auth *Auth) bool {
 	if auth == nil {
-		return false
-	}
-	if e.requireExcelOAuth && !auth.ExcelEligible() {
 		return false
 	}
 	if e.requiredKind != "" && auth.AuthKind() != e.requiredKind {

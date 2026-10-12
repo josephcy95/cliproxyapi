@@ -29,8 +29,6 @@ codex:
 commandcode-api-key:
   - api-key: test-commandcode
     models: [{name: custom, alias: custom-alias}]
-excel-api-key:
-  - enabled: true
 remote-management:
   panel-github-repository: https://github.com/josephcy95/Cli-Proxy-API-Management-Center
 `)
@@ -59,8 +57,8 @@ remote-management:
 	}
 	assert := func(got *Config) {
 		t.Helper()
-		if got.UsageStorePath != before.UsageStorePath || got.UsageRetentionDays != before.UsageRetentionDays || !reflect.DeepEqual(got.ModelContextOverrides, before.ModelContextOverrides) || !reflect.DeepEqual(got.Codex.Instructions, before.Codex.Instructions) || !reflect.DeepEqual(got.Qoder, before.Qoder) || !reflect.DeepEqual(got.CommandCodeKey, before.CommandCodeKey) || !reflect.DeepEqual(got.ExcelKey, before.ExcelKey) || got.RemoteManagement.PanelGitHubRepository != before.RemoteManagement.PanelGitHubRepository {
-			t.Fatalf("fork settings changed during migration/save: before usage=%q/%d overrides=%+v codex=%+v qoder=%+v command=%+v excel=%+v; after usage=%q/%d overrides=%+v codex=%+v qoder=%+v command=%+v excel=%+v", before.UsageStorePath, before.UsageRetentionDays, before.ModelContextOverrides, before.Codex.Instructions, before.Qoder, before.CommandCodeKey, before.ExcelKey, got.UsageStorePath, got.UsageRetentionDays, got.ModelContextOverrides, got.Codex.Instructions, got.Qoder, got.CommandCodeKey, got.ExcelKey)
+		if got.UsageStorePath != before.UsageStorePath || got.UsageRetentionDays != before.UsageRetentionDays || !reflect.DeepEqual(got.ModelContextOverrides, before.ModelContextOverrides) || !reflect.DeepEqual(got.Codex.Instructions, before.Codex.Instructions) || !reflect.DeepEqual(got.Qoder, before.Qoder) || !reflect.DeepEqual(got.CommandCodeKey, before.CommandCodeKey) || got.RemoteManagement.PanelGitHubRepository != before.RemoteManagement.PanelGitHubRepository {
+			t.Fatalf("fork settings changed during migration/save: before usage=%q/%d overrides=%+v codex=%+v qoder=%+v command=%+v; after usage=%q/%d overrides=%+v codex=%+v qoder=%+v command=%+v", before.UsageStorePath, before.UsageRetentionDays, before.ModelContextOverrides, before.Codex.Instructions, before.Qoder, before.CommandCodeKey, got.UsageStorePath, got.UsageRetentionDays, got.ModelContextOverrides, got.Codex.Instructions, got.Qoder, got.CommandCodeKey)
 		}
 	}
 	assert(after)

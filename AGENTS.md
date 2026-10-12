@@ -109,6 +109,9 @@ On conflicts: apply the category tie-breaker. For bucket 2, **keep fork features
 - Primary Chinese README / fork README choices
 - **No sponsor/promo content** — never reintroduce ads, sponsor badges, donate chrome, forced attribution, or marketing splash from upstream
 
+### Retired route (excluded by design)
+- The dedicated ChatGPT Excel/Basispoints model route was removed at the user's request. Do not restore `internal/excel`, Excel executor dispatch, catalog aliases, eligibility rules, or runtime config types. YAML migration discards legacy `excel-api-key` and canonical `api-keys.excel`; ordinary Codex OAuth and generic spreadsheet tools/MIME support remain.
+
 ### Regression pins (keep these green)
 - `TestManagementRoutesAreRegistered` — management routes the UI depends on
 - `TestRegisterAvailableExecutors` — must include `qodercn` and `qoder`

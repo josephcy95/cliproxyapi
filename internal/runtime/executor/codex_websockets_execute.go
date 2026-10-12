@@ -9,7 +9,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -20,13 +19,6 @@ import (
 )
 
 func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
-	if excel.IsAlias(thinking.ParseSuffix(req.Model).ModelName) {
-		if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
-			return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
-		}
-		return e.CodexExecutor.Execute(ctx, auth, req, opts)
-	}
-
 	if ctx == nil {
 		ctx = context.Background()
 	}

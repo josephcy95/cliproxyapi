@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 )
 
@@ -279,34 +278,6 @@ func codexClientMetadataModelID(id string) string {
 		return base
 	}
 	return id
-}
-
-// codexClientBaseModelID returns the public model whose catalog metadata the
-// given model should inherit, or "" when the model stands on its own.
-//
-// This is what makes an alias route advertise the same context window, token
-// limits and capabilities as the model it actually serves. The Excel
-// ("-excel") aliases are the motivating case: they are the same model on a
-// different backend endpoint, so treating them as unknown models made them
-// advertise a smaller window and an empty capability set than the ordinary
-// route.
-//
-// Only the context/token limits differ from the alias's own entry; reasoning
-// levels stay with the alias, because the Excel backend rejects "max" and
-// "ultra".
-func codexClientBaseModelID(id string) string {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return ""
-	}
-	if base, ok := excel.BaseModelFor(id); ok {
-		return base
-	}
-	if idx := strings.Index(id, "/"); idx != -1 {
-		// Provider-prefixed alias, e.g. "kiro/gpt-6-sol-excel".
-		return codexClientBaseModelID(id[idx+1:])
-	}
-	return ""
 }
 
 func applyCodexClientDisplayName(entry map[string]any, model map[string]any) {
@@ -689,23 +660,7 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 	maxTokens := intModelValue(model, "max_completion_tokens")
 	thinkingSupport := codexClientThinkingSupport(model)
 
-	// An alias that names a public base model supplies the advertised context
-	// window, maximum context window and output token limit. The alias is the
-	// same model served on a different endpoint, so it must not look narrower
-	// than the ordinary route; only its reasoning levels differ.
-	//
-	// An explicit per-model configuration (max_context_length) still wins, so
-	// the model-context-overrides feature keeps its meaning for aliases too.
 	configOverride := maxContextWindow > 0
-	if base := codexClientBaseModelID(id); base != "" {
-		if !configOverride {
-			contextWindow, maxContextWindow = codexClientBaseModelWindow(base)
-		}
-		if maxTokens <= 0 {
-			maxTokens = codexClientBaseModelMaxTokens(base)
-		}
-	}
-
 	if info != nil {
 		if info.DisplayName != "" {
 			displayName = info.DisplayName

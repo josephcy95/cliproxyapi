@@ -88,6 +88,7 @@ func SaveConfigPreserveComments(configFile string, cfg *Config, migrateV8 ...boo
 			setYAMLPathWithComments(original.Content[0], alias.old, copy)
 		}
 	}
+	pruneRetiredProviderConfig(original.Content[0])
 	NormalizeCollectionNodeStyles(original.Content[0])
 
 	// Encode and validate the layout before opening the destination for writing.

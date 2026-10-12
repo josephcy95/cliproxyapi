@@ -64,7 +64,6 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
 	}
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
-	applyModelAuthPolicy(reqMeta, originalRequestedModel)
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	normalizedModel, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, normalizedModel, reqMeta)
 	if selectionModel := strings.TrimSpace(execOptions.AuthSelectionModel); selectionModel != "" {
@@ -142,7 +141,6 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 	providers = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
 	reqMeta := requestExecutionMetadata(ctx)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
-	applyModelAuthPolicy(reqMeta, originalRequestedModel)
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	normalizedModel, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, normalizedModel, reqMeta)
 	if selectionModel := strings.TrimSpace(execOptions.AuthSelectionModel); selectionModel != "" {
@@ -291,7 +289,6 @@ func (h *BaseAPIHandler) pluginExecutorRequest(ctx context.Context, entryProtoco
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
 	}
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
-	applyModelAuthPolicy(reqMeta, originalRequestedModel)
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	modelName, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, modelName, reqMeta)
 	if selectionModel := strings.TrimSpace(execOptions.AuthSelectionModel); selectionModel != "" {

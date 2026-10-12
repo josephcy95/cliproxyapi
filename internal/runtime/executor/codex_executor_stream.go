@@ -11,7 +11,6 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/client/grokbuild"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/excel"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -31,9 +30,6 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		return e.executeOpenAIImageStream(ctx, auth, req, opts)
 	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
-	if excel.IsAlias(baseModel) {
-		return e.executeExcelStream(ctx, auth, req, opts, baseModel)
-	}
 
 	apiKey, baseURL := codexCreds(auth)
 	if errSIWC := ensureCodexSIWCCredentials(auth, apiKey); errSIWC != nil {

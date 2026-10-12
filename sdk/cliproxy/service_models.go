@@ -166,9 +166,6 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		default:
 			models = registry.GetCodexProModels()
 		}
-		if a.ExcelEligible() {
-			models = s.appendExcelModelsIfEnabled(models)
-		}
 		models = applyExcludedModels(models, excluded)
 	case "kimi", "kimi-ai", "kimi.ai", "kimi.com":
 		models = registry.GetKimiModels()
@@ -1272,54 +1269,6 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 		}
 	}
 	return out
-}
-
-// appendExcelModelsIfEnabled adds the Excel-backed aliases to the Codex model
-// set when the operator has enabled them.
-//
-// They are ordinary Codex models from every caller's point of view: the
-// scheduler picks the credential, usage is attributed to it, cooldown and
-// failure policy apply, and they are listed wherever Codex models are. Only the
-// upstream conversation differs, so there is no separate provider to special-case.
-func (s *Service) appendExcelModelsIfEnabled(models []*ModelInfo) []*ModelInfo {
-	if !s.excelModelsConfigured() {
-		return models
-	}
-	seen := make(map[string]struct{}, len(models))
-	for _, model := range models {
-		if model == nil {
-			continue
-		}
-		seen[strings.ToLower(model.ID)] = struct{}{}
-	}
-	for _, excelModel := range helps.ExcelModels() {
-		if _, exists := seen[strings.ToLower(excelModel.ID)]; exists {
-			continue
-		}
-		models = append(models, excelModel)
-	}
-	return models
-}
-
-// excelModelsConfigured reports whether configuration enables the Excel models.
-//
-// A present section enables them unless every entry is explicitly switched off,
-// so an empty entry ("- {}") is a valid way to turn them on.
-func (s *Service) excelModelsConfigured() bool {
-	if s == nil || s.cfg == nil {
-		return false
-	}
-	for i := range s.cfg.ExcelKey {
-		entry := s.cfg.ExcelKey[i]
-		if entry.Disabled {
-			continue
-		}
-		if entry.Enabled != nil && !*entry.Enabled {
-			continue
-		}
-		return true
-	}
-	return false
 }
 
 func applyOAuthSettings(cfg *config.Config, provider, authKind string, models []*ModelInfo) []*ModelInfo {
