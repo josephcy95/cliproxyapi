@@ -26,15 +26,17 @@ type configCommit struct {
 }
 
 type routingRuntimeState struct {
-	strategy           string
-	sessionAffinity    bool
-	sessionAffinityTTL time.Duration
+	strategy                string
+	sessionAffinity         bool
+	sessionAffinityTTL      time.Duration
+	sessionAffinityRebindOn string
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	state := routingRuntimeState{
-		strategy:           "round-robin",
-		sessionAffinityTTL: time.Hour,
+		strategy:                "round-robin",
+		sessionAffinityTTL:      time.Hour,
+		sessionAffinityRebindOn: coreauth.SessionAffinityRebindOnAny,
 	}
 	if cfg == nil {
 		return state
@@ -51,6 +53,9 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 		if parsed, errParse := time.ParseDuration(ttl); errParse == nil && parsed > 0 {
 			state.sessionAffinityTTL = parsed
 		}
+	}
+	if state.sessionAffinity && strings.EqualFold(strings.TrimSpace(cfg.Routing.SessionAffinityRebindOn), coreauth.SessionAffinityRebindOnQuota) {
+		state.sessionAffinityRebindOn = coreauth.SessionAffinityRebindOnQuota
 	}
 	return state
 }
@@ -69,6 +74,7 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 		selector = coreauth.NewSessionAffinitySelectorWithConfig(coreauth.SessionAffinityConfig{
 			Fallback: selector,
 			TTL:      state.sessionAffinityTTL,
+			RebindOn: state.sessionAffinityRebindOn,
 		})
 	}
 	return selector

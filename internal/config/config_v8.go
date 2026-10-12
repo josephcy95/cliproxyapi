@@ -79,7 +79,7 @@ func buildV8Paths() []configPath {
 		{"usage-store-path", "observability.usage.store-path"}, {"usage-retention-days", "observability.usage.retention-days"},
 		{"model-context-overrides", "routing.model-context-overrides"},
 		{"desensitization", "requests.desensitization"}, {"qoder", "oauth.providers.qoder"},
-		{"host", "server.host"}, {"port", "server.port"}, {"trusted-proxies", "server.trusted-proxies"},
+		{"host", "server.host"}, {"port", "server.port"}, {"max-request-body-bytes", "server.max-request-body-bytes"}, {"github-token", "server.github-token"}, {"trusted-proxies", "server.trusted-proxies"},
 		{"tls", "server.tls"}, {"commercial-mode", "server.commercial-mode"}, {"discovery", "server.discovery"},
 		{"remote-management", "management"}, {"api-keys", "access.api-keys"},
 		{"credential-concurrency", "credentials.concurrency"}, {"credential-in-flight", "credentials.in-flight"},

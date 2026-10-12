@@ -123,8 +123,13 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 	host := h.pluginHost
 	h.mu.Unlock()
 	var quotaSupportedProviders map[string]struct{}
+	var quotaPluginIDs map[string]string
 	if host != nil {
-		quotaSupportedProviders = host.QuotaSupportedProvidersSet(c.Request.Context())
+		quotaPluginIDs = host.QuotaProviderPluginIDs(c.Request.Context())
+		quotaSupportedProviders = make(map[string]struct{}, len(quotaPluginIDs))
+		for provider := range quotaPluginIDs {
+			quotaSupportedProviders[provider] = struct{}{}
+		}
 	}
 	auths := h.authManager.List()
 	observedAt := time.Now().UTC()
@@ -145,6 +150,11 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		files := make([]gin.H, 0, end-start)
 		for _, auth := range matching[start:end] {
 			if entry := h.buildAuthFileEntry(auth, quotaSupportedProviders); entry != nil {
+				if c.GetBool(ConfigV8ContextKey) {
+					if pluginID := quotaPluginIDs[strings.ToLower(strings.TrimSpace(auth.Provider))]; pluginID != "" {
+						entry["quota_plugin_id"] = pluginID
+					}
+				}
 				entry["cooldowns"] = nil
 				if cooldownsKnown {
 					entry["cooldowns"] = coreauth.CooldownSnapshotForAuth(auth, observedAt)
@@ -161,6 +171,11 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 			continue
 		}
 		if entry := h.buildAuthFileEntryWithAdaptive(auth, adaptiveSnapshot, quotaSupportedProviders); entry != nil {
+			if c.GetBool(ConfigV8ContextKey) {
+				if pluginID := quotaPluginIDs[strings.ToLower(strings.TrimSpace(auth.Provider))]; pluginID != "" {
+					entry["quota_plugin_id"] = pluginID
+				}
+			}
 			entry["cooldowns"] = nil
 			if cooldownsKnown {
 				entry["cooldowns"] = coreauth.CooldownSnapshotForAuth(auth, observedAt)

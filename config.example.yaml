@@ -96,6 +96,8 @@ routing:
     session-affinity: false # default: false
     # How long session-to-auth bindings are retained. Default: 1h
     session-affinity-ttl: "1h"
+    # Quota mode keeps session bindings during transient failures.
+    session-affinity-rebind-on: "any"
     force-model-prefix: false
     # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
     cooldown:
@@ -130,6 +132,7 @@ requests:
     # When > 0, emit blank lines every N seconds for non-streaming responses to prevent idle timeouts.
     # streaming:
     #   keepalive-seconds: 15   # Default: 0 (disabled). <= 0 disables keep-alives.
+    #   send-keepalive-before-ft: false # Send keepalives during first-token buffering.
     #   bootstrap-retries: 1    # Default: 0 (disabled). Retries before first byte is sent.
     desensitization:
         enabled: false
@@ -225,6 +228,7 @@ oauth:
         #     - "API"
         #     - "proxy"
         codex:
+            signin-with-chatgpt-identifier: "CLIProxyAPI"
             identity-confuse: false
             # When true, and routing.strategy is fill-first or routing.session-affinity is true,
             # remap Codex prompt_cache_key and installation identity per selected auth.
@@ -322,6 +326,10 @@ access:
         - "your-api-key-2"
         - "your-api-key-3"
 server:
+    # Maximum request body size; zero keeps requests unlimited.
+    max-request-body-bytes: 0
+    # Optional token for GitHub API requests by asset/plugin/model updaters.
+    github-token: ""
     host: ""
     # Server host/interface to bind to. Default is empty ("") to bind all interfaces (IPv4 + IPv6).
     # Use "127.0.0.1" or "localhost" to restrict access to local machine only.
@@ -479,6 +487,8 @@ upstream:
         model-level-cooling: false
         response-steering: false
     claude:
+        # Enable Responses tool_search and per-credential native capability advertising.
+        tool-search: false
         model-level-cooling: false
         disable-cloaking-model-list: false
         # When true, return original model IDs in Anthropic model list responses instead of cloaked IDs.

@@ -6,6 +6,7 @@ import (
 	codexmodels "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/models"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexinstructions"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	responsesclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/claude/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 )
 
@@ -22,7 +23,11 @@ func (h *OpenAIAPIHandler) codexClientModelsResponse(clientVersion ...string) ma
 	if h != nil && h.Cfg != nil && h.Cfg.Client.Codex.EnableApplyPatch {
 		applyPatchCapabilityForModel = h.SupportsApplyPatchModel
 	}
-	built := codexmodels.BuildResponseForClientWithToolCapabilities(baseModels, codexClientProvidersForModel(h), registry.GetGlobalRegistry().GetResponsesWebSearchCapability, applyPatchCapabilityForModel, optimizeMultiAgentV2, version)
+	var toolSearchCapabilityForModel codexmodels.ToolSearchCapabilityForModelFunc
+	if h != nil && responsesclaude.ClientToolSearchEnabled() {
+		toolSearchCapabilityForModel = h.SupportsNativeToolSearchModel
+	}
+	built := codexmodels.BuildResponseForClientWithToolCapabilities(baseModels, codexClientProvidersForModel(h), registry.GetGlobalRegistry().GetResponsesWebSearchCapability, applyPatchCapabilityForModel, toolSearchCapabilityForModel, optimizeMultiAgentV2, version)
 	if raw, ok := built["models"].([]map[string]any); ok {
 		built["models"] = handlers.ExpandPrivateCodexClientModels(h.AuthManager, raw)
 	}

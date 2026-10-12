@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
@@ -251,6 +252,8 @@ func TestManager_ExecuteStream_UnauthorizedRefreshesCurrentAuthBeforeFallback(t 
 
 func TestManager_Execute_RejectedTokenWithInvalidGrantStopsSelectingAuth(t *testing.T) {
 	m, executor, primary, backup, model := newUnauthorizedRefreshFixture(t, false)
+	disableAfter := 0
+	m.SetConfig(&internalconfig.Config{Codex: internalconfig.CodexConfig{AuthFailureDisableAfter: &disableAfter}})
 	executor.mu.Lock()
 	executor.refreshErr = errors.New(`token refresh failed with status 400: {"error": "invalid_grant", "error_description": "Refresh token not found or invalid"}`)
 	executor.mu.Unlock()
@@ -297,6 +300,8 @@ func TestManager_Execute_RejectedTokenWithInvalidGrantStopsSelectingAuth(t *test
 
 func TestManager_MarkResult_InFlightResultDoesNotReviveTerminalUnauthorizedAuth(t *testing.T) {
 	m, executor, primary, backup, model := newUnauthorizedRefreshFixture(t, false)
+	disableAfter := 0
+	m.SetConfig(&internalconfig.Config{Codex: internalconfig.CodexConfig{AuthFailureDisableAfter: &disableAfter}})
 	executor.mu.Lock()
 	executor.refreshErr = errors.New(`token refresh failed with status 400: {"error": "invalid_grant", "error_description": "Refresh token not found or invalid"}`)
 	executor.mu.Unlock()
@@ -400,6 +405,8 @@ func TestManager_ConcurrentUnauthorized_BarrierExecutionPreservesTerminalState(t
 	}
 
 	m := NewManager(nil, &FillFirstSelector{}, nil)
+	disableAfter := 0
+	m.SetConfig(&internalconfig.Config{Codex: internalconfig.CodexConfig{AuthFailureDisableAfter: &disableAfter}})
 	m.RegisterExecutor(executor)
 
 	reg := registry.GetGlobalRegistry()
@@ -532,6 +539,8 @@ func TestManager_ConcurrentUnauthorized_BarrierExecutionPreservesTerminalState(t
 
 func TestManager_ForceRefreshAuth_FailurePreservesTerminalUnauthorizedState(t *testing.T) {
 	m, executor, primary, backup, model := newUnauthorizedRefreshFixture(t, false)
+	disableAfter := 0
+	m.SetConfig(&internalconfig.Config{Codex: internalconfig.CodexConfig{AuthFailureDisableAfter: &disableAfter}})
 
 	// Primary has future nominal expiry.
 	updated, ok := m.GetByID(primary.ID)
@@ -715,5 +724,21 @@ func TestManager_Execute_UnauthorizedRefreshThenRetryStillFailsFallsBackOnce(t *
 	}
 	if got := executor.ExecuteCalls(); len(got) != 3 || got[0] != primary.ID || got[1] != primary.ID || got[2] != backup.ID {
 		t.Fatalf("Execute calls = %v, want [primary, primary, backup]", got)
+	}
+}
+
+func TestManager_RefreshRejectedHardDisabledCredentialDoesNotRepeat(t *testing.T) {
+	m, executor, primary, _, model := newUnauthorizedRefreshFixture(t, true)
+	if _, err := m.Execute(context.Background(), []string{"codex"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	auth, _ := m.GetByID(primary.ID)
+	if !auth.Disabled || auth.Status != StatusDisabled {
+		t.Fatalf("expected fork hard disable: %+v", auth)
+	}
+	before := executor.RefreshCalls()
+	_, _ = m.refreshAuthForRequest(context.Background(), primary.ID, "stale-access-token")
+	if got := executor.RefreshCalls(); got != before {
+		t.Fatalf("hard-disabled rejected token refreshed again: before=%d after=%d", before, got)
 	}
 }

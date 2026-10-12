@@ -61,6 +61,9 @@ func (m *Manager) RegisterExecutor(executor ProviderExecutor) {
 	if replaced == nil || replaced == executor {
 		return
 	}
+	if sharer, ok := replaced.(ExecutionSessionSharer); ok && sharer != nil && sharer.SharesExecutionSessionsWith(executor) {
+		return
+	}
 	if closer, ok := replaced.(ExecutionSessionCloser); ok && closer != nil {
 		closer.CloseExecutionSession(CloseAllExecutionSessionsID)
 	}
@@ -123,6 +126,11 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	}
 	m.authEpochs[auth.ID]++
 	auth.RegistrationEpoch = m.authEpochs[auth.ID]
+	if existing, exists := m.auths[auth.ID]; exists && existing != nil {
+		auth.CredentialVersion = max(auth.CredentialVersion, existing.CredentialVersion) + 1
+	} else if auth.CredentialVersion == 0 {
+		auth.CredentialVersion = 1
+	}
 	auth.Generation = 1
 	// Serialize this credential, but release the manager lock during store I/O.
 	// Persist failures stay non-fatal, but must not be silent: a restart would
@@ -217,6 +225,14 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		m.mu.Unlock()
 		return nil, fmt.Errorf("update auth %s: stale registration epoch %d != %d", auth.ID, base.RegistrationEpoch, existing.RegistrationEpoch)
 	}
+	// Do not let an in-flight refresh overwrite credentials committed after its snapshot.
+	if mode == updateModeRefresh && base != nil && (existing.CredentialVersion != base.CredentialVersion || CredentialsChanged(base, existing)) {
+		if auth.CodexRefreshPatch == nil || !auth.CodexRefreshPatch.CanApplyTo(existing.Metadata) {
+			current := existing.Clone()
+			m.mu.Unlock()
+			return current, nil
+		}
+	}
 	if mode == updateModeRefresh {
 		merged := MergeRefreshedAuth(base, existing, auth)
 		if merged != nil {
@@ -251,19 +267,30 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	} else {
 		auth.Generation++
 	}
+	existingVersion := existing.CredentialVersion
+	if existingVersion == 0 {
+		existingVersion = 1
+	}
+	credChanged := CredentialsChanged(existing, auth)
+	if credChanged {
+		auth.CredentialVersion = max(auth.CredentialVersion, existingVersion) + 1
+	} else {
+		auth.CredentialVersion = existingVersion
+	}
 	replaceRuntime := auth.ReplaceRuntimeState
 	cooldownStateChanged := false
 	if replaceRuntime {
 		ResetAuthRuntimeForRelogin(auth)
+		auth.PersistCodexRuntimeReset = true
 	} else {
-		credChanged := CredentialsChanged(existing, auth)
 		bothActive := !existing.Disabled && existing.Status != StatusDisabled && !auth.Disabled && auth.Status != StatusDisabled
 		if bothActive || credChanged {
 			// Merge states when both sides are active, or when credentials changed so
 			// unauthorized/exhaustion clears can resume models even if previously disabled.
 			auth.ModelStates = mergeModelStatesConservatively(existing.ModelStates, auth.ModelStates, now)
 		}
-		if credChanged {
+		if credChanged || mode == updateModeRefresh {
+			auth.RejectedAccessToken = ""
 			// Fresh tokens invalidate prior unauthorized / exhaustion disablement.
 			if hasUnauthorizedAuthFailure(existing) || existing.Disabled || existing.Status == StatusDisabled || (auth.LastError != nil && isUnauthorizedError(auth.LastError)) {
 				auth.Disabled = false
@@ -275,6 +302,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 					delete(auth.Metadata, "disabled")
 					delete(auth.Metadata, "disabled_reason")
 				}
+				cooldownStateChanged = true
 			}
 			resumed := clearUnauthorizedModelStates(auth, now)
 			if len(resumed) > 0 {
@@ -287,6 +315,9 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 			// Rewrite that block from the cleared states so a replaced token cannot
 			// resurrect the unauthorized cooldown it just invalidated.
 			syncAuthRuntimeMetadata(auth, now)
+			auth.PersistCodexRuntimeReset = true
+		} else {
+			auth.RejectedAccessToken = existing.RejectedAccessToken
 		}
 		// Preserve credential_quota across reload/token refresh even when CredentialsChanged
 		// (upstream behavior). Rate limits are account-scoped, not token-string-scoped.
@@ -305,6 +336,14 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	cooldownStateChanged = normalizeModelStates(auth) || cooldownStateChanged
 	if replaceRuntime || m.cooldownDisabledForAuth(auth) || auth.Disabled || auth.Status == StatusDisabled {
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged || replaceRuntime
+	}
+	if existing.Metadata != nil {
+		if persistedHints, hasHints := existing.Metadata["antigravity_capability_hints"]; hasHints {
+			if auth.Metadata == nil {
+				auth.Metadata = make(map[string]any)
+			}
+			auth.Metadata["antigravity_capability_hints"] = persistedHints
+		}
 	}
 	auth.EnsureIndex()
 	// Save before publication, including the transactional Meta mint path.
@@ -411,7 +450,9 @@ func (m *Manager) Remove(ctx context.Context, id string) {
 
 	if provider != "" {
 		if exec, ok := m.Executor(provider); ok && exec != nil {
-			if closer, okCloser := exec.(ExecutionSessionCloser); okCloser {
+			if authCloser, okAuthCloser := exec.(AuthExecutionSessionCloser); okAuthCloser && authCloser != nil {
+				authCloser.CloseAuthExecutionSessions(id)
+			} else if closer, okCloser := exec.(ExecutionSessionCloser); okCloser {
 				closer.CloseExecutionSession(CloseAllExecutionSessionsID)
 			}
 		}
@@ -475,6 +516,15 @@ func (m *Manager) Load(ctx context.Context) error {
 		m.authEpochs[auth.ID] = max(m.authEpochs[auth.ID], auth.RegistrationEpoch) + 1
 		auth.RegistrationEpoch = m.authEpochs[auth.ID]
 		auth.Generation = 1
+		if prev, exists := previousAuths[auth.ID]; exists && prev != nil {
+			auth.CredentialVersion = max(auth.CredentialVersion, prev.CredentialVersion)
+			if CredentialsChanged(prev, auth) {
+				auth.CredentialVersion++
+			}
+		}
+		if auth.CredentialVersion == 0 {
+			auth.CredentialVersion = 1
+		}
 		m.auths[auth.ID] = auth.Clone()
 	}
 
@@ -562,6 +612,11 @@ func (m *Manager) persist(ctx context.Context, auth *Auth) error {
 		if shouldSkipPersist(ctx) {
 			return nil
 		}
+		releaseFg, errWait := m.beginForegroundStoreSave(ctx)
+		if errWait != nil {
+			return errWait
+		}
+		defer releaseFg()
 		_, err := store.Save(ctx, auth)
 		return err
 	}
@@ -569,6 +624,11 @@ func (m *Manager) persist(ctx context.Context, auth *Auth) error {
 	if shouldSkipPersist(ctx) {
 		return nil
 	}
+	releaseFg, errWait := m.beginForegroundStoreSave(ctx)
+	if errWait != nil {
+		return errWait
+	}
+	defer releaseFg()
 	_, err := store.Save(ctx, auth)
 	return err
 }

@@ -99,7 +99,7 @@ func excludeExecutionProvider(providers []string, excluded string) []string {
 }
 
 func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
-	return h.getRequestDetailsWithOptions(modelName, false)
+	return h.getRequestDetailsWithOptions(modelName, false, false)
 }
 
 func validateNativeInteractionsExecution(entryProtocol string, execOptions modelExecutionOptions, routeDecision modelRouteDecision) *interfaces.ErrorMessage {
@@ -142,6 +142,9 @@ func (h *BaseAPIHandler) providersForExecution(modelName, originalRequestedModel
 		if errMsg := h.validateImageOnlyModel(normalizedModel, allowImageModel); errMsg != nil {
 			return nil, "", errMsg
 		}
+		if errMsg := h.validateSpeechOnlyModel(normalizedModel, execOptions.AllowSpeechModel); errMsg != nil {
+			return nil, "", errMsg
+		}
 		return []string{forcedProvider}, normalizedModel, nil
 	}
 	if routeDecision.Provider != "" {
@@ -152,12 +155,15 @@ func (h *BaseAPIHandler) providersForExecution(modelName, originalRequestedModel
 		if errMsg := h.validateImageOnlyModel(normalizedModel, allowImageModel); errMsg != nil {
 			return nil, "", errMsg
 		}
+		if errMsg := h.validateSpeechOnlyModel(normalizedModel, execOptions.AllowSpeechModel); errMsg != nil {
+			return nil, "", errMsg
+		}
 		return []string{routeDecision.Provider}, normalizedModel, nil
 	}
-	return h.getRequestDetailsWithOptions(modelName, allowImageModel)
+	return h.getRequestDetailsWithOptions(modelName, allowImageModel, execOptions.AllowSpeechModel)
 }
 
-func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowImageModel bool) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
+func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowImageModel, allowSpeechModel bool) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
 	resolvedModelName := modelName
 	initialSuffix := thinking.ParseSuffix(modelName)
 	if initialSuffix.ModelName == "auto" {
@@ -191,6 +197,9 @@ func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowIma
 	lookupModel := stripPrivateCodexMarkersForProviderLookup(authManager, baseModel)
 
 	if errMsg := h.validateImageOnlyModel(lookupModel, allowImageModel); errMsg != nil {
+		return nil, "", errMsg
+	}
+	if errMsg := h.validateSpeechOnlyModel(baseModel, allowSpeechModel); errMsg != nil {
 		return nil, "", errMsg
 	}
 
@@ -256,6 +265,31 @@ func (h *BaseAPIHandler) validateImageOnlyModel(modelName string, allowImageMode
 func isOpenAIImageOnlyModel(model string) bool {
 	switch strings.ToLower(strings.TrimSpace(routeModelBaseName(model))) {
 	case "gpt-image-1.5", "gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5", "grok-imagine-image", "grok-imagine-image-quality", "grok-imagine-image-2.0":
+		return true
+	default:
+		return false
+	}
+}
+
+// validateSpeechOnlyModel rejects speech-only models outside the speech endpoints so they are
+// never sent to a chat upstream.
+func (h *BaseAPIHandler) validateSpeechOnlyModel(modelName string, allowSpeechModel bool) *interfaces.ErrorMessage {
+	baseModel := strings.TrimSpace(thinking.ParseSuffix(modelName).ModelName)
+	if baseModel == "" {
+		baseModel = strings.TrimSpace(modelName)
+	}
+	if isXAISpeechOnlyModel(baseModel) && !allowSpeechModel {
+		return &interfaces.ErrorMessage{
+			StatusCode: http.StatusBadRequest,
+			Error:      fmt.Errorf("model %s is only supported on /v1/audio/speech and /v1/tts", routeModelBaseName(baseModel)),
+		}
+	}
+	return nil
+}
+
+func isXAISpeechOnlyModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(routeModelBaseName(model))) {
+	case "grok-tts", "grok-voice-tts-1.0":
 		return true
 	default:
 		return false

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	xaiauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/xai"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -103,7 +104,7 @@ type apiCallResponse struct {
 func (h *Handler) APICall(c *gin.Context) {
 	var body apiCallRequest
 	if errBindJSON := c.ShouldBindJSON(&body); errBindJSON != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(clienterror.HTTPStatusFromErrorOr(errBindJSON, http.StatusBadRequest), gin.H{"error": "invalid body"})
 		return
 	}
 
@@ -237,9 +238,11 @@ func (h *Handler) APICall(c *gin.Context) {
 			errorCode = "auth_unavailable"
 		}
 		h.authManager.MarkResult(c.Request.Context(), coreauth.Result{
-			AuthID:   auth.ID,
-			Provider: "codex",
-			Success:  false,
+			AuthID:            auth.ID,
+			CredentialVersion: auth.CredentialVersion,
+			RegistrationEpoch: auth.RegistrationEpoch,
+			Provider:          "codex",
+			Success:           false,
 			Error: &coreauth.Error{
 				Code:       errorCode,
 				HTTPStatus: resp.StatusCode,
