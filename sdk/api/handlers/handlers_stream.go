@@ -24,12 +24,64 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 	return h.executeStreamWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, false)
 }
 
+// HasAlternativeExecutionTarget reports whether an alternative credential other
+// than excludedAuthID can serve a replayed request for modelName.
+func (h *BaseAPIHandler) HasAlternativeExecutionTarget(ctx context.Context, handlerType, modelName string, rawJSON []byte, excludedAuthID string) bool {
+	if h == nil || h.AuthManager == nil {
+		return false
+	}
+	originalRequestedModel := modelName
+	execOptions := modelExecutionOptions{
+		AllowSpeechModel: isModelExecutionSpeechProtocol(handlerType),
+	}
+	routeDecision, preparedRoute := preparedModelRouteFromContext(ctx, "")
+	if !preparedRoute {
+		routeDecision = h.applyModelRouter(ctx, handlerType, modelName, rawJSON, true, execOptions)
+	}
+	if routeDecision.ExecutorPluginID != "" {
+		return false
+	}
+	providers, normalizedModel, errMsg := h.providersForExecution(modelName, originalRequestedModel, false, routeDecision, execOptions)
+	if errMsg != nil {
+		return false
+	}
+	providers = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
+	reqMeta := requestExecutionMetadata(ctx)
+	delete(reqMeta, coreexecutor.PinnedAuthMetadataKey)
+	delete(reqMeta, coreexecutor.ExecutionSessionMetadataKey)
+	delete(reqMeta, coreexecutor.SelectedAuthCallbackMetadataKey)
+	delete(reqMeta, coreexecutor.FinalizedResponseFormatCallbackMetadataKey)
+	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
+	normalizedModel, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, normalizedModel, reqMeta)
+	addModelExecutionSourceMetadata(reqMeta, false)
+	setReasoningEffortMetadata(reqMeta, handlerType, normalizedModel, rawJSON)
+	setServiceTierMetadata(reqMeta, rawJSON)
+	setGenerateMetadata(reqMeta, rawJSON)
+	originalRequest := rawJSON
+	if ctxOriginal := originalRequestFromContext(ctx); len(ctxOriginal) > 0 {
+		originalRequest = ctxOriginal
+	}
+	responseProtocol := modelExecutionResponseProtocol(handlerType, handlerType)
+	opts := coreexecutor.Options{
+		Stream:          true,
+		OriginalRequest: originalRequest,
+		SourceFormat:    sdktranslator.FromString(handlerType),
+		ResponseFormat:  sdktranslator.FromString(responseProtocol),
+		Headers:         modelExecutionHeaders(ctx, nil),
+		Query:           modelExecutionQuery(ctx, nil),
+		Metadata:        reqMeta,
+	}
+	ctx = enrichContextWithSessionHierarchy(ctx, opts.Headers, rawJSON, opts.Metadata)
+	return h.AuthManager.HasAlternativeTargetForModel(ctx, providers, normalizedModel, opts, excludedAuthID)
+}
+
 // ExecuteImageStreamWithAuthManager executes a streaming OpenAI-compatible image endpoint request.
 func (h *BaseAPIHandler) ExecuteImageStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	return h.executeStreamWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, true)
 }
 
 func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProtocol, responseProtocol, modelName, originalRequestedModel string, rawJSON []byte, alt, executorPluginID string, execOptions modelExecutionOptions) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+	ctx = coreusage.WithStream(ctx, true)
 	if h.AuthManager != nil && h.AuthManager.HomeEnabled() {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
@@ -68,6 +120,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 	if !execOptions.InternalSource {
 		reporter = helps.NewUsageReporter(execCtx, executorPluginID, modelName, nil)
 		reporter.SetTranslatedReasoningEffort(req.Payload, entryProtocol)
+		reporter.StartResponseTTFT()
 	}
 	streamResult, errStream := host.ExecutePluginExecutorStream(execCtx, executorPluginID, req, opts)
 	if errStream != nil {
@@ -93,7 +146,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 		return nil, nil, errChan
 	}
 
-	passthroughHeadersEnabled := executionPassthroughHeaders(h.Cfg, execOptions.InternalSource)
+	passthroughHeadersEnabled := executionPassthroughHeaders(h.CurrentConfig(), execOptions.InternalSource)
 	interceptorHost := h.interceptorHost()
 	streamInterceptorsActive := streamInterceptorsEnabled(interceptorHost)
 	rawStreamHeaders := cloneHeader(streamResult.Headers)
@@ -219,6 +272,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 			if len(chunk.Payload) == 0 {
 				continue
 			}
+			observePluginExecutorStreamTTFT(responseProtocol, reporter, chunk.Payload)
 			observePluginExecutorStreamUsage(responseProtocol, chunk.Payload, &streamUsage)
 			payload := cloneBytes(chunk.Payload)
 			if streamInterceptorsActive {
@@ -328,6 +382,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	if execOptions.Path != "" {
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
 	}
+	addCallerScopeMetadata(reqMeta, execOptions.CallerScope)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	normalizedModel, reqMeta = applyPrivateCodexInstructionModel(h.AuthManager, normalizedModel, reqMeta)
@@ -347,19 +402,24 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		Model:   normalizedModel,
 		Payload: payload,
 	}
+	originalRequest := rawJSON
+	if ctxOriginal := originalRequestFromContext(ctx); len(ctxOriginal) > 0 {
+		originalRequest = ctxOriginal
+	}
 	afterAuthCapture := &requestAfterAuthCapture{}
 	lifecycle := h.newRequestLifecycleTracker(ctx, entryProtocol, normalizedModel, originalRequestedModel, true, reqMeta, execOptions.SkipInterceptorPluginID)
 	opts := coreexecutor.Options{
-		Stream:                      true,
-		Alt:                         alt,
-		OriginalRequest:             rawJSON,
-		SourceFormat:                sdktranslator.FromString(entryProtocol),
-		ResponseFormat:              sdktranslator.FromString(responseProtocol),
-		Headers:                     modelExecutionHeaders(ctx, execOptions.Headers),
-		Query:                       modelExecutionQuery(ctx, execOptions.Query),
-		RequestAfterAuthInterceptor: h.requestAfterAuthInterceptor(afterAuthCapture, lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
-		WebSocketResponseObserver:   h.webSocketResponseObserver(lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
-		ProxyURL:                    execOptions.ProxyURL,
+		Stream:                       true,
+		Alt:                          alt,
+		OriginalRequest:              originalRequest,
+		SourceFormat:                 sdktranslator.FromString(entryProtocol),
+		ResponseFormat:               sdktranslator.FromString(responseProtocol),
+		Headers:                      modelExecutionHeaders(ctx, execOptions.Headers),
+		Query:                        modelExecutionQuery(ctx, execOptions.Query),
+		RequestBeforeAuthInterceptor: h.requestBeforeAuthInterceptor(lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
+		RequestAfterAuthInterceptor:  h.requestAfterAuthInterceptor(afterAuthCapture, lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
+		WebSocketResponseObserver:    h.webSocketResponseObserver(lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
+		ProxyURL:                     execOptions.ProxyURL,
 	}
 	opts.Metadata = reqMeta
 	ctx = enrichContextWithSessionHierarchy(ctx, opts.Headers, req.Payload, opts.Metadata)
@@ -397,7 +457,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	if executedReq, executedOpts := executedRequest(); len(executedOpts.Headers) > 0 || len(executedReq.Payload) > 0 || len(executedOpts.Metadata) > 0 {
 		ctx = enrichContextWithSessionHierarchy(ctx, executedOpts.Headers, executedReq.Payload, executedOpts.Metadata)
 	}
-	passthroughHeadersEnabled := executionPassthroughHeaders(h.Cfg, execOptions.InternalSource)
+	passthroughHeadersEnabled := executionPassthroughHeaders(h.CurrentConfig(), execOptions.InternalSource)
 	interceptorHost := h.interceptorHost()
 	streamInterceptorsActive := streamInterceptorsEnabled(interceptorHost)
 	// Resolve bootstrap retries and header initialization before returning so the
@@ -514,17 +574,10 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	var bootstrapErr *interfaces.ErrorMessage
 	readInitialStreamChunks := func() {
 		for {
-			var chunk coreexecutor.StreamChunk
-			var ok bool
-			if ctx != nil {
-				select {
-				case <-ctx.Done():
-					streamCanceledBeforeRead = true
-					return
-				case chunk, ok = <-chunks:
-				}
-			} else {
-				chunk, ok = <-chunks
+			chunk, ok, canceled := nextStreamChunk(ctx, nil, nil, chunks)
+			if canceled {
+				streamCanceledBeforeRead = true
+				return
 			}
 			if !ok {
 				streamClosedBeforeRead = true
@@ -565,7 +618,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		}
 	}
 
-	maxBootstrapRetries := StreamingBootstrapRetries(h.Cfg)
+	maxBootstrapRetries := StreamingBootstrapRetries(h.CurrentConfig())
 	if h.AuthManager.HomeEnabled() {
 		maxBootstrapRetries = 0
 	}

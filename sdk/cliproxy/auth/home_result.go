@@ -14,11 +14,15 @@ const homeResultExecutorType = "home-result"
 
 // ReportHomeUnauthorized publishes a result-only zero-token usage record for an
 // upstream 401 attempt that did not pass through an executor UsageReporter.
-func (m *Manager) ReportHomeUnauthorized(ctx context.Context, auth *Auth, provider, model string) {
-	m.reportHomeUnauthorized(ctx, auth, provider, model, AccessTokenSHA256(auth))
+func (m *Manager) ReportHomeUnauthorized(ctx context.Context, auth *Auth, provider, model string, upstreamBody ...[]byte) {
+	failureBody := ""
+	if len(upstreamBody) > 0 {
+		failureBody = string(upstreamBody[0])
+	}
+	m.reportHomeUnauthorized(ctx, auth, provider, model, AccessTokenSHA256(auth), failureBody)
 }
 
-func (m *Manager) reportHomeUnauthorized(ctx context.Context, auth *Auth, provider, model, accessTokenSHA256 string) {
+func (m *Manager) reportHomeUnauthorized(ctx context.Context, auth *Auth, provider, model, accessTokenSHA256 string, bodies ...string) {
 	if m == nil || auth == nil {
 		return
 	}
@@ -29,6 +33,10 @@ func (m *Manager) reportHomeUnauthorized(ctx context.Context, auth *Auth, provid
 	accessTokenSHA256 = strings.TrimSpace(accessTokenSHA256)
 	if authIndex == "" || accessTokenSHA256 == "" {
 		return
+	}
+	failureBody := "upstream unauthorized"
+	if len(bodies) > 0 && bodies[0] != "" {
+		failureBody = bodies[0]
 	}
 	provider = strings.TrimSpace(provider)
 	if provider == "" {
@@ -69,7 +77,7 @@ func (m *Manager) reportHomeUnauthorized(ctx context.Context, auth *Auth, provid
 		Failed:            true,
 		Fail: coreusage.Failure{
 			StatusCode: http.StatusUnauthorized,
-			Body:       "upstream unauthorized",
+			Body:       failureBody,
 		},
 	})
 }

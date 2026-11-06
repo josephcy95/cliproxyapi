@@ -235,8 +235,10 @@ func (h *Handler) PutLogsMaxTotalSizeMB(c *gin.Context) {
 	if value < 0 {
 		value = 0
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.LogsMaxTotalSizeMB = value
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 // ErrorLogsMaxFiles
@@ -255,8 +257,10 @@ func (h *Handler) PutErrorLogsMaxFiles(c *gin.Context) {
 	if value < 0 {
 		value = 10
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.ErrorLogsMaxFiles = value
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 // Request log
@@ -300,8 +304,10 @@ func (h *Handler) PutCodexInstructions(c *gin.Context) {
 	for i := range body.RequestMarkers.Suffixes {
 		body.RequestMarkers.Suffixes[i] = strings.TrimSpace(body.RequestMarkers.Suffixes[i])
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.Codex.Instructions = body
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 func (h *Handler) GetQoderConfig(c *gin.Context) {
@@ -329,8 +335,10 @@ func (h *Handler) PutQoderConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body", "message": err.Error()})
 		return
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.Qoder = config.NormalizeQoderConfig(qoderBody)
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 func (h *Handler) GetXAIConfig(c *gin.Context) {
@@ -361,8 +369,10 @@ func (h *Handler) PutXAIConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body", "message": err.Error()})
 		return
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.XAI = config.NormalizeXAIConfig(xaiBody)
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 func (h *Handler) GetCodexFailureConfig(c *gin.Context) {
@@ -394,11 +404,13 @@ func (h *Handler) PutCodexFailureConfig(c *gin.Context) {
 		return
 	}
 	normalized := config.NormalizeCodexConfig(body)
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.Codex.AutoDisableAuthFailures = normalized.AutoDisableAuthFailures
 	h.cfg.Codex.AuthFailureDisableAfter = normalized.AuthFailureDisableAfter
 	h.cfg.Codex.UsageLimitDisableAfter = normalized.UsageLimitDisableAfter
 	h.cfg.Codex.UsageLimitCooldownFallbackHours = normalized.UsageLimitCooldownFallbackHours
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 // Request retry
@@ -469,8 +481,10 @@ func (h *Handler) PutRoutingStrategy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid strategy"})
 		return
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.Routing.Strategy = normalized
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 // Proxy URL
@@ -479,6 +493,8 @@ func (h *Handler) PutProxyURL(c *gin.Context) {
 	h.updateStringField(c, func(v string) { h.cfg.ProxyURL = v })
 }
 func (h *Handler) DeleteProxyURL(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.ProxyURL = ""
-	h.persist(c)
+	h.persistLocked(c)
 }

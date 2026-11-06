@@ -101,7 +101,7 @@ func recoverQoderQuotaProbeDisable(auth *Auth, now time.Time) bool {
 }
 
 func (m *Manager) shouldAutoDisableQoderAuth(result Result) bool {
-	if m == nil || !isQoderProvider(result.Provider) || result.Error == nil {
+	if m == nil || !isQoderProvider(result.Provider) || result.Error == nil || skipPermanentCredentialFailure(result.Error) {
 		return false
 	}
 	cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
@@ -155,7 +155,7 @@ func isQoderQueuedForbiddenError(resultErr *Error) bool {
 }
 
 func (m *Manager) shouldAutoDisableXAIAuth(result Result) bool {
-	if m == nil || !strings.EqualFold(strings.TrimSpace(result.Provider), "xai") || result.Error == nil {
+	if m == nil || !strings.EqualFold(strings.TrimSpace(result.Provider), "xai") || result.Error == nil || skipPermanentCredentialFailure(result.Error) {
 		return false
 	}
 	cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
@@ -208,7 +208,7 @@ func (m *Manager) disableXAIAuth(auth *Auth, reason string, resultErr *Error, no
 }
 
 func (m *Manager) xaiExhaustionKindForResult(result Result) xaiExhaustionKind {
-	if m == nil || !strings.EqualFold(strings.TrimSpace(result.Provider), "xai") || result.Error == nil {
+	if m == nil || !strings.EqualFold(strings.TrimSpace(result.Provider), "xai") || result.Error == nil || skipPermanentCredentialFailure(result.Error) {
 		return ""
 	}
 	if isXAIFreeUsageExhaustedError(result.Error) {
@@ -288,7 +288,7 @@ func (m *Manager) effectiveRetryAfterForResult(result Result) *time.Duration {
 }
 
 func (m *Manager) codexExhaustionKindForResult(result Result) codexExhaustionKind {
-	if m == nil || !strings.EqualFold(strings.TrimSpace(result.Provider), "codex") || result.Error == nil {
+	if m == nil || !strings.EqualFold(strings.TrimSpace(result.Provider), "codex") || result.Error == nil || skipPermanentCredentialFailure(result.Error) {
 		return ""
 	}
 	if isCodexUsageLimitError(result.Error) || isCodexUsageLimitErrorMessage(result.Error) {
@@ -549,7 +549,7 @@ func isCodexUsageLimitErrorMessage(resultErr *Error) bool {
 }
 
 func isCodexHardAuthFailureError(resultErr *Error) bool {
-	if resultErr == nil {
+	if resultErr == nil || skipPermanentCredentialFailure(resultErr) {
 		return false
 	}
 	if isInvalidGrantResultError(resultErr) {
@@ -640,6 +640,7 @@ func mergeModelStatesConservatively(existing, incoming map[string]*ModelState, n
 			continue
 		}
 		incomingState := merged[model]
+		originalIncoming := incoming[model]
 		if incomingState == nil {
 			merged[model] = existingState.Clone()
 			continue
@@ -651,6 +652,14 @@ func mergeModelStatesConservatively(existing, incoming map[string]*ModelState, n
 			incomingState = existingState.Clone()
 			merged[model] = incomingState
 		}
+		layers := mergeModelState(existingState.Clone(), originalIncoming)
+		incomingState.cooldownRecordedSeq = layers.cooldownRecordedSeq
+		incomingState.credentialQuotaShadow = layers.credentialQuotaShadow
+		incomingState.credentialQuotaPropagated = layers.credentialQuotaPropagated
+		incomingState.FreeUsageExhaustionCount = max(originalIncoming.FreeUsageExhaustionCount, existingState.FreeUsageExhaustionCount)
+		incomingState.OtherForbiddenCount = max(originalIncoming.OtherForbiddenCount, existingState.OtherForbiddenCount)
+		incomingState.UsageLimitCount = max(originalIncoming.UsageLimitCount, existingState.UsageLimitCount)
+		incomingState.AuthFailureCount = max(originalIncoming.AuthFailureCount, existingState.AuthFailureCount)
 		if existingState.FreeUsageExhaustionCount > incomingState.FreeUsageExhaustionCount {
 			incomingState.FreeUsageExhaustionCount = existingState.FreeUsageExhaustionCount
 		}
@@ -665,4 +674,10 @@ func mergeModelStatesConservatively(existing, incoming map[string]*ModelState, n
 		}
 	}
 	return merged
+}
+
+// Request rules own the cooldown decision for classified errors. A matching 401
+// must not also trigger an independent permanent-disable or exhaustion policy.
+func skipPermanentCredentialFailure(resultErr *Error) bool {
+	return resultErr != nil && (resultErr.Code == ErrorCodeForceCooldown || shouldSkipCredentialCooldown(resultErr))
 }

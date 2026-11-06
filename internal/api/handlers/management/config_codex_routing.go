@@ -26,8 +26,10 @@ func (h *Handler) PutCodexRoutingConfig(c *gin.Context) {
 		return
 	}
 	body.Strategy = strategy
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.Codex.Routing = body
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 func normalizeCodexRoutingStrategy(strategy string) (string, bool) {

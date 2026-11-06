@@ -18,6 +18,7 @@ import (
 	responsesclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/claude/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestore"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/openai"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
@@ -56,10 +57,14 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 	if errContext := ctx.Err(); errContext != nil {
 		return false
 	}
+	cfg = cfg.CloneForRuntime()
 	// Reconstruct old config from YAML snapshot to avoid reference sharing issues
 	var oldCfg *config.Config
-	if len(s.oldConfigYaml) > 0 {
-		_ = yaml.Unmarshal(s.oldConfigYaml, &oldCfg)
+	s.cfgMu.RLock()
+	oldConfigYaml := append([]byte(nil), s.oldConfigYaml...)
+	s.cfgMu.RUnlock()
+	if len(oldConfigYaml) > 0 {
+		_ = yaml.Unmarshal(oldConfigYaml, &oldCfg)
 	}
 
 	// Update request logger enabled state if it has changed
@@ -193,6 +198,7 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 		}
 	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
+	openai.SetResponsesWebsocketCompressionEnabled(cfg.Codex.WebsocketCompressionEnabled())
 	if oldCfg != nil && s.wsAuthChanged != nil && oldCfg.WebsocketAuth != cfg.WebsocketAuth {
 		s.wsAuthChanged(oldCfg.WebsocketAuth, cfg.WebsocketAuth)
 	}
@@ -202,7 +208,10 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 		return false
 	}
 	// Save YAML snapshot for next comparison
-	s.oldConfigYaml, _ = yaml.Marshal(cfg)
+	marshaledCfg, _ := yaml.Marshal(cfg)
+	s.cfgMu.Lock()
+	s.oldConfigYaml = marshaledCfg
+	s.cfgMu.Unlock()
 
 	s.handlers.UpdateClients(effectiveSDKConfig(cfg))
 	s.handlers.SetPluginHost(s.pluginHost)

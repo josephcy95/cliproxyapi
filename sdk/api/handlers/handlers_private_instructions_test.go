@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"testing"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -97,5 +99,33 @@ func TestApplyPrivateCodexInstructionModelCustomSuffix(t *testing.T) {
 	}
 	if got := metadata[coreexecutor.CodexPrivateInstructionsMetadataKey]; got != true {
 		t.Fatalf("private metadata = %#v, want true", got)
+	}
+}
+
+func TestAlternativeTargetProbePreservesPrivateInstructionEligibility(t *testing.T) {
+	const model = "gpt-5-private-probe"
+	executor := &interceptorCaptureExecutor{}
+	handler := newInterceptorHandler(t, model, executor, nil)
+	requireAllow := true
+	handler.AuthManager.SetConfig(&internalconfig.Config{Codex: internalconfig.CodexConfig{Instructions: internalconfig.CodexInstructionsConfig{
+		Enabled: true, RequireAuthAllow: &requireAllow,
+		RequestMarkers: internalconfig.CodexInstructionMarkersConfig{Suffixes: []string{"-jb"}},
+	}}})
+	alternative := &coreauth.Auth{ID: "private-probe-alternative", Provider: "codex", Status: coreauth.StatusActive, Attributes: map[string]string{"allow_private_instructions": "true"}}
+	if _, err := handler.AuthManager.Register(context.Background(), alternative); err != nil {
+		t.Fatal(err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(alternative.ID, alternative.Provider, []*registry.ModelInfo{{ID: model}})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(alternative.ID) })
+	excluded := "handler-interceptor-" + model
+	if !handler.HasAlternativeExecutionTarget(context.Background(), "openai-response", model+"-jb", []byte(`{}`), excluded) {
+		t.Fatal("eligible alternative for private virtual model was not found")
+	}
+	alternative.Attributes["allow_private_instructions"] = "false"
+	if _, err := handler.AuthManager.Update(context.Background(), alternative); err != nil {
+		t.Fatal(err)
+	}
+	if handler.HasAlternativeExecutionTarget(context.Background(), "openai-response", model+"-jb", []byte(`{}`), excluded) {
+		t.Fatal("private virtual model bypassed alternative credential allow policy")
 	}
 }

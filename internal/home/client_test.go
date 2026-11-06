@@ -3,12 +3,17 @@ package home
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -26,7 +31,7 @@ import (
 )
 
 func TestAuthDispatchRequestIncludesCount(t *testing.T) {
-	req := newAuthDispatchRequest("gpt-5.4", "session-1", http.Header{"Authorization": {"Bearer test"}}, 2, "")
+	req := newAuthDispatchRequest("gpt-5.4", "session-1", "", http.Header{"Authorization": {"Bearer test"}}, 2, "", nil, "")
 
 	raw, err := json.Marshal(&req)
 	if err != nil {
@@ -46,7 +51,7 @@ func TestAuthDispatchRequestIncludesCount(t *testing.T) {
 }
 
 func TestAuthDispatchRequestDefaultsCountToOne(t *testing.T) {
-	req := newAuthDispatchRequest("gpt-5.4", "", nil, 0, "")
+	req := newAuthDispatchRequest("gpt-5.4", "", "", nil, 0, "", nil, "")
 
 	if req.Count != 1 {
 		t.Fatalf("count = %d, want 1", req.Count)
@@ -57,7 +62,7 @@ func TestAuthDispatchRequestDefaultsCountToOne(t *testing.T) {
 }
 
 func TestAuthDispatchRequestIncludesCredentialPolicy(t *testing.T) {
-	req := newAuthDispatchRequest("gpt-5.4", "", nil, 1, "codex_alpha_search_v1")
+	req := newAuthDispatchRequest("gpt-5.4", "", "", nil, 1, "codex_alpha_search_v1", nil, "")
 	raw, errMarshal := json.Marshal(&req)
 	if errMarshal != nil {
 		t.Fatalf("marshal auth dispatch request: %v", errMarshal)
@@ -68,6 +73,156 @@ func TestAuthDispatchRequestIncludesCredentialPolicy(t *testing.T) {
 	}
 	if got := payload["credential_policy"]; got != "codex_alpha_search_v1" {
 		t.Fatalf("credential_policy = %#v, want codex_alpha_search_v1", got)
+	}
+}
+
+func TestAuthDispatchRequestIncludesExcludedAuthIDs(t *testing.T) {
+	excludedAuthIDs := []string{"auth-a", "auth-b"}
+	req := newAuthDispatchRequest("gpt-5.4", "", "", nil, 2, "", &excludedAuthIDs, "")
+	if req.Count != 1 {
+		t.Fatalf("new retry-contract count = %d, want 1 for legacy Home compatibility", req.Count)
+	}
+	raw, errMarshal := json.Marshal(&req)
+	if errMarshal != nil {
+		t.Fatalf("marshal auth dispatch request: %v", errMarshal)
+	}
+	var payload map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &payload); errUnmarshal != nil {
+		t.Fatalf("unmarshal auth dispatch request: %v", errUnmarshal)
+	}
+	got, ok := payload["excluded_auth_ids"].([]any)
+	if !ok || len(got) != 2 || got[0] != "auth-a" || got[1] != "auth-b" {
+		t.Fatalf("excluded_auth_ids = %#v, want [auth-a auth-b]", payload["excluded_auth_ids"])
+	}
+}
+
+func TestAuthDispatchRequestIncludesEmptyExcludedAuthIDs(t *testing.T) {
+	excludedAuthIDs := []string{}
+	req := newAuthDispatchRequest("gpt-5.4", "", "", nil, 2, "", &excludedAuthIDs, "")
+	if req.Count != 1 {
+		t.Fatalf("new retry-contract count = %d, want 1 for legacy Home compatibility", req.Count)
+	}
+	raw, errMarshal := json.Marshal(&req)
+	if errMarshal != nil {
+		t.Fatalf("marshal auth dispatch request: %v", errMarshal)
+	}
+	var payload map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &payload); errUnmarshal != nil {
+		t.Fatalf("unmarshal auth dispatch request: %v", errUnmarshal)
+	}
+	got, ok := payload["excluded_auth_ids"].([]any)
+	if !ok || len(got) != 0 {
+		t.Fatalf("excluded_auth_ids = %#v, want []", payload["excluded_auth_ids"])
+	}
+}
+
+func TestAuthDispatchRequestIncludesPinnedAuthID(t *testing.T) {
+	excludedAuthIDs := []string{}
+	req := newAuthDispatchRequest("gpt-5.4", "", "", nil, 2, "", &excludedAuthIDs, " auth-pinned ")
+
+	raw, errMarshal := json.Marshal(&req)
+	if errMarshal != nil {
+		t.Fatalf("marshal auth dispatch request: %v", errMarshal)
+	}
+	var payload map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &payload); errUnmarshal != nil {
+		t.Fatalf("unmarshal auth dispatch request: %v", errUnmarshal)
+	}
+	if got := payload["pinned_auth_id"]; got != "auth-pinned" {
+		t.Fatalf("pinned_auth_id = %#v, want auth-pinned", got)
+	}
+}
+
+func TestAuthDispatchRequestDistinguishesLegacyAndRetryRoundProtocol(t *testing.T) {
+	excludedAuthIDs := []string{"auth-a"}
+	legacy := newAuthDispatchRequest("gpt-5.4", "", "", nil, 3, "", &excludedAuthIDs, "")
+	legacyRaw, errMarshal := json.Marshal(&legacy)
+	if errMarshal != nil {
+		t.Fatalf("marshal legacy auth dispatch request: %v", errMarshal)
+	}
+	var legacyPayload map[string]any
+	if errUnmarshal := json.Unmarshal(legacyRaw, &legacyPayload); errUnmarshal != nil {
+		t.Fatalf("unmarshal legacy auth dispatch request: %v", errUnmarshal)
+	}
+	if _, present := legacyPayload["retry_round"]; present {
+		t.Fatalf("legacy request unexpectedly included retry_round: %#v", legacyPayload["retry_round"])
+	}
+
+	initial := newAuthDispatchRequestWithRetryRound("gpt-5.4", "", "", nil, 3, "", 0, &excludedAuthIDs, "")
+	initialRaw, errMarshal := json.Marshal(&initial)
+	if errMarshal != nil {
+		t.Fatalf("marshal initial auth dispatch request: %v", errMarshal)
+	}
+	var initialPayload map[string]any
+	if errUnmarshal := json.Unmarshal(initialRaw, &initialPayload); errUnmarshal != nil {
+		t.Fatalf("unmarshal initial auth dispatch request: %v", errUnmarshal)
+	}
+	if got := int(initialPayload["retry_round"].(float64)); got != 0 {
+		t.Fatalf("initial retry_round = %d, want explicit 0", got)
+	}
+	if got := int(initialPayload["count"].(float64)); got != 1 {
+		t.Fatalf("initial retry-contract count = %d, want 1", got)
+	}
+
+	additional := newAuthDispatchRequestWithRetryRound("gpt-5.4", "", "", nil, 3, "", 2, &excludedAuthIDs, "")
+	additionalRaw, errMarshal := json.Marshal(&additional)
+	if errMarshal != nil {
+		t.Fatalf("marshal additional auth dispatch request: %v", errMarshal)
+	}
+	var additionalPayload map[string]any
+	if errUnmarshal := json.Unmarshal(additionalRaw, &additionalPayload); errUnmarshal != nil {
+		t.Fatalf("unmarshal additional auth dispatch request: %v", errUnmarshal)
+	}
+	if got := int(additionalPayload["retry_round"].(float64)); got != 2 {
+		t.Fatalf("retry_round = %d, want 2", got)
+	}
+	if got := additionalPayload["excluded_auth_ids"].([]any); len(got) != 1 || got[0] != "auth-a" {
+		t.Fatalf("excluded_auth_ids = %#v, want [auth-a]", additionalPayload["excluded_auth_ids"])
+	}
+}
+
+func TestAuthDispatchRequestIncludesParentSessionID(t *testing.T) {
+	req := newAuthDispatchRequest("gpt-5.4", "slot:pi-sub1", "slot:pi-main", nil, 1, "", nil, "")
+	if req.SessionID != "slot:pi-sub1" {
+		t.Fatalf("session_id = %q, want slot:pi-sub1", req.SessionID)
+	}
+	if req.ParentSessionID != "slot:pi-main" {
+		t.Fatalf("parent_session_id = %q, want slot:pi-main", req.ParentSessionID)
+	}
+
+	raw, errMarshal := json.Marshal(&req)
+	if errMarshal != nil {
+		t.Fatalf("marshal auth dispatch request: %v", errMarshal)
+	}
+	var payload map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &payload); errUnmarshal != nil {
+		t.Fatalf("unmarshal auth dispatch request: %v", errUnmarshal)
+	}
+	if got := payload["session_id"]; got != "slot:pi-sub1" {
+		t.Fatalf("session_id = %#v, want slot:pi-sub1", got)
+	}
+	if got := payload["parent_session_id"]; got != "slot:pi-main" {
+		t.Fatalf("parent_session_id = %#v, want slot:pi-main", got)
+	}
+}
+
+func TestAuthDispatchRequestIncludesNodeKind(t *testing.T) {
+	headers := http.Header{"X-Node-Kind": []string{"compaction"}}
+	req := newAuthDispatchRequest("gpt-5.4", "lcp:v1:child", "lcp:v1:parent", headers, 1, "", nil, "")
+	if req.NodeKind != "compaction" {
+		t.Fatalf("node_kind = %q, want compaction", req.NodeKind)
+	}
+
+	raw, errMarshal := json.Marshal(&req)
+	if errMarshal != nil {
+		t.Fatalf("marshal auth dispatch request: %v", errMarshal)
+	}
+	var payload map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &payload); errUnmarshal != nil {
+		t.Fatalf("unmarshal auth dispatch request: %v", errUnmarshal)
+	}
+	if got := payload["node_kind"]; got != "compaction" {
+		t.Fatalf("payload node_kind = %#v, want compaction", got)
 	}
 }
 
@@ -2128,4 +2283,107 @@ func findRedisCommand(commands [][]string, commandName string) []string {
 		}
 	}
 	return nil
+}
+
+func TestReadRESPBulkBoundsAndOverflowProtection(t *testing.T) {
+	for _, tc := range []struct {
+		wire        string
+		wantErr     string
+		overflows32 bool
+	}{
+		{wire: "$9223372036854775806\r\n", wantErr: "too large", overflows32: true},
+		{wire: "$9223372036854775807\r\n", wantErr: "too large", overflows32: true},
+		{wire: "$2147483647\r\n", wantErr: "too large"},
+		{wire: "$2147483648\r\n", wantErr: "too large", overflows32: true},
+		{wire: "$" + strconv.Itoa(maxHomeCertificateRESPBulkLen+1) + "\r\n", wantErr: "too large"},
+		{wire: "$-1\r\n", wantErr: "returned nil"},
+		{wire: "$-2\r\n", wantErr: "invalid bulk length"},
+		{wire: "$2\r\nokXX", wantErr: "invalid terminator"},
+		{wire: "$" + strings.Repeat("9", maxHomeCertificateRESPLineLen+4096), wantErr: "line is too long"},
+	} {
+		_, errRead := readRESPBulk(bufio.NewReader(strings.NewReader(tc.wire)))
+		if errRead == nil {
+			t.Fatalf("readRESPBulk(%q) succeeded, want error %q", tc.wire[:min(len(tc.wire), 32)], tc.wantErr)
+		}
+		if errors.Is(errRead, io.EOF) || errors.Is(errRead, io.ErrUnexpectedEOF) {
+			t.Fatalf("readRESPBulk(%q) returned EOF %v, want %q", tc.wire[:min(len(tc.wire), 32)], errRead, tc.wantErr)
+		}
+		wantErr := tc.wantErr
+		if strconv.IntSize == 32 && tc.overflows32 {
+			wantErr = "value out of range"
+		}
+		if !strings.Contains(errRead.Error(), wantErr) {
+			t.Fatalf("readRESPBulk(%q) error = %v, want %q", tc.wire[:min(len(tc.wire), 32)], errRead, wantErr)
+		}
+	}
+
+	got, errValid := readRESPBulk(bufio.NewReader(strings.NewReader("$2\r\nok\r\n")))
+	if errValid != nil {
+		t.Fatalf("readRESPBulk(valid) error = %v", errValid)
+	}
+	if string(got) != "ok" {
+		t.Fatalf("readRESPBulk(valid) = %q, want %q", string(got), "ok")
+	}
+}
+
+func newHomeTestCertificate(t *testing.T) tls.Certificate {
+	t.Helper()
+	key, errKey := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if errKey != nil {
+		t.Fatalf("generate test key: %v", errKey)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "127.0.0.1"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IsCA:         true,
+	}
+	der, errCreate := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if errCreate != nil {
+		t.Fatalf("create test certificate: %v", errCreate)
+	}
+	leaf, errParse := x509.ParseCertificate(der)
+	if errParse != nil {
+		t.Fatalf("parse test certificate: %v", errParse)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}
+}
+
+// Exercise the concrete client so optional dispatcher interfaces cannot silently
+// fall back to the legacy wire request in production.
+func TestClientRPopAuthWithSessionHierarchySerializesRetryConstraints(t *testing.T) {
+	client, commands := newRedisCommandTestClient(t, func(args []string) string {
+		if len(args) > 0 && strings.EqualFold(args[0], "HELLO") {
+			return "%6\r\n$6\r\nserver\r\n$5\r\nredis\r\n$5\r\nproto\r\n:3\r\n$2\r\nid\r\n:1\r\n$4\r\nmode\r\n$10\r\nstandalone\r\n$4\r\nrole\r\n$6\r\nmaster\r\n$7\r\nmodules\r\n*0\r\n"
+		}
+		if len(args) > 0 && strings.EqualFold(args[0], "RPOP") {
+			return "$2\r\n{}\r\n"
+		}
+		return "+OK\r\n"
+	})
+	round := 2
+	_, err := client.RPopAuthWithSessionHierarchy(context.Background(), "gpt-5.4", "child", "parent", http.Header{"X-Node-Kind": {"compaction"}}, 3, "policy", &round, []string{"auth-a"}, "auth-pinned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := findRedisCommand(commands.All(), "RPOP")
+	if len(command) != 2 {
+		t.Fatalf("missing dispatch command: %#v", command)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(command[1]), &payload); err != nil {
+		t.Fatal(err)
+	}
+	for key, expected := range map[string]any{"retry_round": float64(2), "count": float64(1), "session_id": "child", "parent_session_id": "parent", "node_kind": "compaction", "credential_policy": "policy", "pinned_auth_id": "auth-pinned"} {
+		if payload[key] != expected {
+			t.Fatalf("%s = %#v, want %#v", key, payload[key], expected)
+		}
+	}
+	if !reflect.DeepEqual(payload["excluded_auth_ids"], []any{"auth-a"}) {
+		t.Fatalf("exclusions lost: %#v", payload)
+	}
 }

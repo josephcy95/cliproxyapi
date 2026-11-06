@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -908,4 +909,34 @@ func (e *overloadStreamExecutor) CountTokens(context.Context, *coreauth.Auth, co
 
 func (e *overloadStreamExecutor) HttpRequest(context.Context, *coreauth.Auth, *http.Request) (*http.Response, error) {
 	return nil, &coreauth.Error{Code: "not_implemented", Message: "HttpRequest not implemented"}
+}
+
+// Test the real writer so classification cannot be lost at its call site.
+func TestWriteErrorResponsePreservesTerminalAuthClassification(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	terminal := coreauth.NewTerminalAuthError(&coreauth.Error{Code: "auth_unavailable", Message: "no auth available", HTTPStatus: http.StatusServiceUnavailable}, errors.New("token revoked"))
+	NewBaseAPIHandlers(nil, nil).WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: terminal})
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), `"code":"upstream_authentication_required"`) {
+		t.Fatalf("terminal auth contract lost: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+type syncDirectError struct{}
+
+func (syncDirectError) Error() string        { return "provider rejected request" }
+func (syncDirectError) StatusCode() int      { return http.StatusBadRequest }
+func (syncDirectError) DirectResponse() bool { return true }
+func (syncDirectError) ResponseBody() []byte { return []byte(`{"error":{"code":"provider_error"}}`) }
+
+func TestExecutionErrorMessagePreservesDirectProviderBody(t *testing.T) {
+	msg := executionErrorMessage(fmt.Errorf("wrapped: %w", syncDirectError{}))
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	NewBaseAPIHandlers(nil, nil).WriteErrorResponse(c, msg)
+	if !msg.DirectResponse || recorder.Code != http.StatusBadRequest || recorder.Body.String() != string((syncDirectError{}).ResponseBody()) || recorder.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("direct response contract lost: %+v %d %s", msg, recorder.Code, recorder.Body.String())
+	}
 }

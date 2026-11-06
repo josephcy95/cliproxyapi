@@ -47,9 +47,11 @@ func (h *Handler) PutDesensitizationConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body", "message": err.Error()})
 		return
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cfg.Desensitization = config.NormalizeDesensitizationConfig(body)
 	desensitization.Configure(h.cfg.Desensitization)
-	h.persist(c)
+	h.persistLocked(c)
 }
 
 // GetDesensitizationScopeOptions returns selectable inbound keys and provider ids.

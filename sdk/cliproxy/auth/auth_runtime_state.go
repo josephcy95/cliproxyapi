@@ -30,14 +30,16 @@ const (
 //	  }
 //	}
 type authRuntimeModelState struct {
-	CooldownUntil   time.Time `json:"cooldown_until,omitempty"`
-	Reason          string    `json:"reason,omitempty"`
-	HTTPStatus      int       `json:"http_status,omitempty"`
-	LastResponse    string    `json:"last_response,omitempty"`
-	FreeUsageHits   int       `json:"free_usage_hits,omitempty"`
-	Other403Hits    int       `json:"other_403_hits,omitempty"`
-	UsageLimitHits  int       `json:"usage_limit_hits,omitempty"`
-	AuthFailureHits int       `json:"auth_failure_hits,omitempty"`
+	CooldownUntil   time.Time   `json:"cooldown_until,omitempty"`
+	Reason          string      `json:"reason,omitempty"`
+	HTTPStatus      int         `json:"http_status,omitempty"`
+	ErrorCode       string      `json:"error_code,omitempty"`
+	Quota           *QuotaState `json:"quota,omitempty"`
+	LastResponse    string      `json:"last_response,omitempty"`
+	FreeUsageHits   int         `json:"free_usage_hits,omitempty"`
+	Other403Hits    int         `json:"other_403_hits,omitempty"`
+	UsageLimitHits  int         `json:"usage_limit_hits,omitempty"`
+	AuthFailureHits int         `json:"auth_failure_hits,omitempty"`
 }
 
 // hydrateAuthRuntimeFromMetadata rebuilds in-memory ModelStates from auth-file runtime.
@@ -84,19 +86,23 @@ func hydrateAuthRuntimeFromMetadata(auth *Auth, now time.Time) {
 			entry.UsageLimitHits <= 0 && entry.AuthFailureHits <= 0 {
 			continue
 		}
+		hadLiveState := auth.ModelStates[model] != nil
 		state := ensureModelState(auth, model)
-		if cooling {
+		if cooling && !hadLiveState {
 			state.Unavailable = true
 			state.Status = StatusError
 			state.NextRetryAfter = entry.CooldownUntil
 			state.StatusMessage = entry.Reason
-			state.Quota = QuotaState{
-				Exceeded:      true,
-				Reason:        entry.Reason,
-				NextRecoverAt: entry.CooldownUntil,
+			if entry.Quota != nil {
+				state.Quota = entry.Quota.Clone()
+			} else if entry.HTTPStatus != 401 {
+				// Legacy records lacked separate quota provenance. Preserve
+				// their cooldowns, but never turn a 401 into account quota.
+				state.Quota = QuotaState{Exceeded: true, Reason: entry.Reason, NextRecoverAt: entry.CooldownUntil}
 			}
 			if entry.LastResponse != "" || entry.HTTPStatus > 0 {
 				state.LastError = &Error{
+					Code:       entry.ErrorCode,
 					Message:    entry.LastResponse,
 					HTTPStatus: entry.HTTPStatus,
 				}
@@ -179,7 +185,9 @@ func modelStateToRuntimeEntry(state *ModelState, now time.Time) *authRuntimeMode
 		state.UsageLimitCount <= 0 && state.AuthFailureCount <= 0 {
 		return nil
 	}
+	quota := state.Quota.Clone()
 	entry := &authRuntimeModelState{
+		Quota:           &quota,
 		FreeUsageHits:   state.FreeUsageExhaustionCount,
 		Other403Hits:    state.OtherForbiddenCount,
 		UsageLimitHits:  state.UsageLimitCount,
@@ -195,6 +203,7 @@ func modelStateToRuntimeEntry(state *ModelState, now time.Time) *authRuntimeMode
 			entry.Reason = "quota"
 		}
 		if state.LastError != nil {
+			entry.ErrorCode = state.LastError.Code
 			entry.HTTPStatus = state.LastError.HTTPStatus
 			entry.LastResponse = truncateRuntimeLastResponse(state.LastError.Message)
 		}
@@ -209,6 +218,12 @@ func runtimeEntryToMap(entry *authRuntimeModelState) map[string]any {
 	}
 	if !entry.CooldownUntil.IsZero() {
 		out["cooldown_until"] = entry.CooldownUntil.Format(time.RFC3339Nano)
+	}
+	if entry.Quota != nil {
+		out["quota"] = entry.Quota
+	}
+	if entry.ErrorCode != "" {
+		out["error_code"] = entry.ErrorCode
 	}
 	if entry.Reason != "" {
 		out["reason"] = entry.Reason
@@ -241,6 +256,14 @@ func parseAuthRuntimeModelState(m map[string]any) authRuntimeModelState {
 	}
 	entry.CooldownUntil = parseRuntimeTime(m["cooldown_until"])
 	entry.Reason = strings.TrimSpace(anyToString(m["reason"]))
+	if raw, ok := m["quota"]; ok && raw != nil {
+		encoded, err := json.Marshal(raw)
+		var quota QuotaState
+		if err == nil && json.Unmarshal(encoded, &quota) == nil {
+			entry.Quota = &quota
+		}
+	}
+	entry.ErrorCode = strings.TrimSpace(anyToString(m["error_code"]))
 	entry.HTTPStatus = anyToInt(m["http_status"])
 	entry.LastResponse = strings.TrimSpace(anyToString(m["last_response"]))
 	entry.FreeUsageHits = anyToInt(m["free_usage_hits"])

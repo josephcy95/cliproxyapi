@@ -326,6 +326,14 @@ access:
         - "your-api-key-2"
         - "your-api-key-3"
 server:
+    # Negotiated compression only affects buffered HTTP responses; streaming stays incremental.
+    response-compression:
+        enabled: true
+        min-bytes: 1024
+    # Local persistent request metadata; relative path stays under the configured data root.
+    kv-store:
+        disabled: false
+        path: ""
     # Maximum request body size; zero keeps requests unlimited.
     max-request-body-bytes: 0
     # Optional token for GitHub API requests by asset/plugin/model updaters.

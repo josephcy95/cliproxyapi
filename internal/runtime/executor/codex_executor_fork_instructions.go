@@ -5,6 +5,8 @@ package executor
 
 import (
 	"os"
+
+	"github.com/MoeForge/moego/ojson"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexinstructions"
@@ -104,5 +106,16 @@ func joinCodexInstructions(first, second string) string {
 		return first
 	default:
 		return first + "\n\n" + second
+	}
+}
+
+// applyCodexConfiguredInstructionsDoc preserves the fork policy on shared mutable payloads.
+func applyCodexConfiguredInstructionsDoc(cfg *config.Config, auth *cliproxyauth.Auth, model string, doc *ojson.Doc, opts cliproxyexecutor.Options) {
+	if doc == nil {
+		return
+	}
+	body := applyCodexConfiguredInstructions(cfg, auth, model, doc.Bytes(), opts)
+	if instructions := ojson.GetBytesNoCopy(body, "instructions"); instructions.Exists() {
+		_ = doc.Set("instructions", instructions.String())
 	}
 }

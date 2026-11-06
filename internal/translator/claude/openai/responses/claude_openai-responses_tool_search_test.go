@@ -5,7 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 )
 
 // Fixtures follow openai/codex: the tool_search spec from
@@ -37,18 +38,18 @@ func codexToolSearchRequest(items ...string) []byte {
 		`],"tool_choice":"auto","stream":true}`)
 }
 
-func convertToolSearchRequest(t *testing.T, request []byte) gjson.Result {
+func convertToolSearchRequest(t *testing.T, request []byte) ojson.Result {
 	t.Helper()
 	out, err := ConvertOpenAIResponsesRequestToClaude("claude-sonnet-4-5", request, true)
 	if err != nil {
 		t.Fatalf("convert: %v", err)
 	}
-	return gjson.ParseBytes(out)
+	return util.ParseGJSONBytesNoCopy(out)
 }
 
-func claudeToolNamesOf(req gjson.Result) []string {
+func claudeToolNamesOf(req ojson.Result) []string {
 	var names []string
-	req.Get("tools").ForEach(func(_, tool gjson.Result) bool {
+	req.Get("tools").ForEach(func(_, tool ojson.Result) bool {
 		names = append(names, tool.Get("name").String())
 		return true
 	})
@@ -104,22 +105,23 @@ func TestConvertOpenAIResponsesRequestToClaude_HostedToolSearchIsNotForwarded(t 
 func TestConvertOpenAIResponsesRequestToClaude_ToolSearchNameIsCollisionSafe(t *testing.T) {
 	req := convertToolSearchRequest(t, []byte(`{"model":"claude-sonnet-4-5","input":"hi","tools":[{"type":"function","name":"tool.search","parameters":{"type":"object"}},`+codexToolSearchDeclaration+`]}`))
 	names := claudeToolNamesOf(req)
-	if len(names) != 2 || names[1] != responsesToolSearchType || names[0] == names[1] {
+	// The third tool is the deferred anchor native tool search declares.
+	if len(names) != 3 || names[1] != responsesToolSearchType || names[0] == names[1] || names[2] != responsesDeferredAnchorName {
 		t.Fatalf("tool names = %v, want unique names with tool_search kept", names)
 	}
 }
 
 func TestConvertOpenAIResponsesRequestToClaude_ToolSearchOmitsDeferredTools(t *testing.T) {
 	req := convertToolSearchRequest(t, codexToolSearchRequest(codexUserTurn))
-	if got := strings.Join(claudeToolNamesOf(req), ","); got != "exec_command,tool_search" {
-		t.Fatalf("tools = %s, want deferred tools omitted", got)
+	if got := strings.Join(claudeToolNamesOf(req), ","); got != "exec_command,tool_search,"+responsesDeferredAnchorName {
+		t.Fatalf("tools = %s, want deferred tools omitted and only the anchor declared", got)
 	}
 }
 
 func TestConvertOpenAIResponsesRequestToClaude_ToolSearchHistoryReplaysAndActivatesTools(t *testing.T) {
 	turn2 := convertToolSearchRequest(t, codexToolSearchRequest(codexUserTurn, codexSearchCall1, codexSearchOutput1))
 
-	wantTurn2 := "exec_command,tool_search,mcp__codex_apps__calendar_create_event,lookup_order"
+	wantTurn2 := "exec_command,tool_search," + responsesDeferredAnchorName + ",mcp__codex_apps__calendar_create_event,lookup_order"
 	if got := strings.Join(claudeToolNamesOf(turn2), ","); got != wantTurn2 {
 		t.Fatalf("turn 2 tools = %s, want %s", got, wantTurn2)
 	}
@@ -170,9 +172,9 @@ func TestConvertOpenAIResponsesRequestToClaude_ToolSearchHistoryReplaysAndActiva
 
 func TestConvertOpenAIResponsesRequestToClaude_NamespacedFunctionCallHistoryIsQualified(t *testing.T) {
 	req := convertToolSearchRequest(t, codexToolSearchRequest(codexUserTurn, codexSearchCall1, codexSearchOutput1, codexNSCall, codexNSCallOutput))
-	var replayed gjson.Result
-	req.Get("messages").ForEach(func(_, message gjson.Result) bool {
-		message.Get("content").ForEach(func(_, block gjson.Result) bool {
+	var replayed ojson.Result
+	req.Get("messages").ForEach(func(_, message ojson.Result) bool {
+		message.Get("content").ForEach(func(_, block ojson.Result) bool {
 			if block.Get("id").String() == "call_cal_1" {
 				replayed = block
 			}
@@ -221,7 +223,7 @@ var claudeToolSearchStream = []string{
 	`data: {"type":"message_stop"}`,
 }
 
-func assertCodexToolSearchCall(t *testing.T, label string, item gjson.Result) {
+func assertCodexToolSearchCall(t *testing.T, label string, item ojson.Result) {
 	t.Helper()
 	if item.Get("type").String() != "tool_search_call" || item.Get("call_id").String() != "toolu_search" ||
 		item.Get("execution").String() != "client" || item.Get("status").String() != "completed" ||
@@ -233,7 +235,7 @@ func assertCodexToolSearchCall(t *testing.T, label string, item gjson.Result) {
 	}
 }
 
-func assertOrdinaryToolCalls(t *testing.T, label string, calendar, exec gjson.Result) {
+func assertOrdinaryToolCalls(t *testing.T, label string, calendar, exec ojson.Result) {
 	t.Helper()
 	if calendar.Get("type").String() != "function_call" || calendar.Get("name").String() != "calendar_create_event" ||
 		calendar.Get("namespace").String() != "mcp__codex_apps__" || calendar.Get("arguments").String() != `{"title":"Standup"}` {
@@ -249,8 +251,8 @@ func TestConvertClaudeResponseToOpenAIResponses_ToolSearchBecomesToolSearchCall(
 	request := codexToolSearchRequest(codexUserTurn, codexSearchCall1, codexSearchOutput1)
 
 	var param any
-	var added, done []gjson.Result
-	var completed gjson.Result
+	var added, done []ojson.Result
+	var completed ojson.Result
 	for _, chunk := range claudeToolSearchStream {
 		for _, output := range ConvertClaudeResponseToOpenAIResponses(context.Background(), "claude-test", request, nil, []byte(chunk), &param) {
 			event, data := parseClaudeResponsesSSEEvent(t, output)
@@ -291,9 +293,9 @@ func TestConvertClaudeResponseToOpenAIResponsesNonStream_ToolSearchBecomesToolSe
 	raw := []byte(strings.Join(claudeToolSearchStream, "\n"))
 
 	out := ConvertClaudeResponseToOpenAIResponsesNonStream(context.Background(), "claude-test", request, nil, raw, nil)
-	output := gjson.GetBytes(out, "output").Array()
+	output := ojson.GetBytesNoCopy(out, "output").Array()
 	if len(output) != 3 {
-		t.Fatalf("output = %s", gjson.GetBytes(out, "output").Raw)
+		t.Fatalf("output = %s", ojson.GetBytesNoCopy(out, "output").Raw)
 	}
 	assertCodexToolSearchCall(t, "non-stream", output[0])
 	assertOrdinaryToolCalls(t, "non-stream", output[1], output[2])
@@ -332,7 +334,7 @@ func TestConvertClaudeResponseToOpenAIResponses_TruncatedToolSearchIsIncomplete(
 			chunks = append(chunks, `data: {"type":"message_delta","delta":{"stop_reason":"`+tc.stopReason+`"},"usage":{"output_tokens":5}}`, `data: {"type":"message_stop"}`)
 
 			var param any
-			var done, terminal gjson.Result
+			var done, terminal ojson.Result
 			for _, chunk := range chunks {
 				for _, output := range ConvertClaudeResponseToOpenAIResponses(context.Background(), "claude-test", request, nil, []byte(chunk), &param) {
 					event, data := parseClaudeResponsesSSEEvent(t, output)
@@ -344,7 +346,7 @@ func TestConvertClaudeResponseToOpenAIResponses_TruncatedToolSearchIsIncomplete(
 					}
 				}
 			}
-			for label, item := range map[string]gjson.Result{"done": done, "terminal": terminal} {
+			for label, item := range map[string]ojson.Result{"done": done, "terminal": terminal} {
 				if item.Get("type").String() != "tool_search_call" || item.Get("status").String() != "incomplete" ||
 					item.Get("arguments").Raw != tc.wantArguments {
 					t.Fatalf("%s item = %s, want incomplete tool_search_call with arguments %s", label, item.Raw, tc.wantArguments)
@@ -376,7 +378,7 @@ func TestConvertOpenAIResponsesRequestToClaude_ToolSearchNameCollisionRoutesCons
 		wantProp  string
 	}{
 		{"user function first", userFunction + "," + codexToolSearchDeclaration, "tool_search,lookup_order", "function_call", "x"},
-		{"client declaration first", codexToolSearchDeclaration + "," + userFunction, "tool_search", "tool_search_call", "query"},
+		{"client declaration first", codexToolSearchDeclaration + "," + userFunction, "tool_search," + responsesDeferredAnchorName, "tool_search_call", "query"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := []byte(`{"model":"claude-sonnet-4-5","input":"hi","tools":[` + tc.tools + `,` + codexDeferredTool + `]}`)
@@ -389,7 +391,7 @@ func TestConvertOpenAIResponsesRequestToClaude_ToolSearchNameCollisionRoutesCons
 			}
 
 			out := ConvertClaudeResponseToOpenAIResponsesNonStream(context.Background(), "claude-test", request, nil, []byte(claudeCall), nil)
-			if got := gjson.GetBytes(out, "output.0.type").String(); got != tc.wantType {
+			if got := ojson.GetBytesNoCopy(out, "output.0.type").String(); got != tc.wantType {
 				t.Fatalf("Claude call became %s, want %s: %s", got, tc.wantType, out)
 			}
 		})
@@ -410,7 +412,7 @@ func TestConvertOpenAIResponsesRequestToClaude_ToolSearchNameCollisionRoutesCons
 func TestConvertOpenAIResponsesRequestToClaude_ToolSearchOutputSkipsDirectlyDeclaredTools(t *testing.T) {
 	declaredOnly := `{"type":"tool_search_output","call_id":"call_search_1","status":"completed","execution":"client","tools":[` + codexExecCommandTool + `]}`
 	req := convertToolSearchRequest(t, codexToolSearchRequest(codexUserTurn, codexSearchCall1, declaredOnly))
-	if got := req.Get("messages.2.content.0.content"); got.Type != gjson.String || got.String() != "Tools now available to call: exec_command." {
+	if got := req.Get("messages.2.content.0.content"); got.Type != ojson.String || got.String() != "Tools now available to call: exec_command." {
 		t.Fatalf("declared-only output content = %s", got.Raw)
 	}
 
@@ -439,9 +441,9 @@ func TestConvertOpenAIResponsesRequestToClaude_ToolSearchOutputDeduplicatesRefer
 		t.Fatalf("calendar declared %d times: %s", len(got), req.Get("tools").Raw)
 	}
 	var references []string
-	req.Get("messages").ForEach(func(_, message gjson.Result) bool {
-		message.Get("content").ForEach(func(_, block gjson.Result) bool {
-			block.Get("content").ForEach(func(_, part gjson.Result) bool {
+	req.Get("messages").ForEach(func(_, message ojson.Result) bool {
+		message.Get("content").ForEach(func(_, block ojson.Result) bool {
+			block.Get("content").ForEach(func(_, part ojson.Result) bool {
 				if part.Get("type").String() == "tool_reference" && part.Get("tool_name").String() == "mcp__codex_apps__calendar_create_event" {
 					references = append(references, block.Get("tool_use_id").String())
 				}
@@ -459,7 +461,7 @@ func TestConvertOpenAIResponsesRequestToClaude_ToolSearchOutputDeduplicatesRefer
 func TestConvertOpenAIResponsesRequestToClaude_ToolSearchOutputWithoutToolsKeepsText(t *testing.T) {
 	empty := `{"type":"tool_search_output","call_id":"call_search_1","status":"completed","execution":"client","tools":[]}`
 	req := convertToolSearchRequest(t, codexToolSearchRequest(codexUserTurn, codexSearchCall1, empty))
-	if got := req.Get("messages.2.content.0.content"); got.Type != gjson.String || got.String() != "No matching tools were found." {
+	if got := req.Get("messages.2.content.0.content"); got.Type != ojson.String || got.String() != "No matching tools were found." {
 		t.Fatalf("empty output content = %s", got.Raw)
 	}
 }
@@ -477,5 +479,85 @@ func TestConvertOpenAIResponsesRequestToClaude_DeferredToolsDropCacheControl(t *
 		if !tool.Get("defer_loading").Bool() || tool.Get("cache_control").Exists() {
 			t.Fatalf("deferred tool %s = %s, want defer_loading without cache_control", name, tool.Raw)
 		}
+	}
+}
+
+// Anthropic keeps the prompt cache when deferred tools are added, but only once
+// the request already carries a deferred tool: going from no deferred tools to
+// one misses the cache (measured on claude-opus-5-5, 2026-10-12). Codex hides
+// deferred tools until a search returns them, so native tool search always
+// declares one constant deferred anchor and discoveries only append after it.
+func TestConvertOpenAIResponsesRequestToClaude_DeferredAnchorKeepsToolsPrefixStable(t *testing.T) {
+	turn1 := convertToolSearchRequest(t, codexToolSearchRequest(codexUserTurn))
+	turn2 := convertToolSearchRequest(t, codexToolSearchRequest(codexUserTurn, codexSearchCall1, codexSearchOutput1))
+
+	wantTurn1 := "exec_command,tool_search," + responsesDeferredAnchorName
+	if got := strings.Join(claudeToolNamesOf(turn1), ","); got != wantTurn1 {
+		t.Fatalf("turn 1 tools = %s, want %s", got, wantTurn1)
+	}
+	anchor := turn1.Get(`tools.#(name=="` + responsesDeferredAnchorName + `")`)
+	if !anchor.Get("defer_loading").Bool() || anchor.Get("cache_control").Exists() || !anchor.Get("input_schema").IsObject() {
+		t.Fatalf("anchor = %s, want a deferred tool without cache_control", anchor.Raw)
+	}
+	turn1Tools, turn2Tools := turn1.Get("tools").Array(), turn2.Get("tools").Array()
+	if len(turn2Tools) <= len(turn1Tools) {
+		t.Fatalf("turn 2 tools = %s, want turn 1 tools plus discoveries", turn2.Get("tools").Raw)
+	}
+	for i, tool := range turn1Tools {
+		if turn2Tools[i].Raw != tool.Raw {
+			t.Fatalf("tool %d changed after discovery:\n%s\n%s", i, tool.Raw, turn2Tools[i].Raw)
+		}
+	}
+	references := turn2.Get("messages.2.content.0.content").Raw
+	if strings.Contains(references, responsesDeferredAnchorName) {
+		t.Fatalf("anchor must never be referenced: %s", references)
+	}
+}
+
+// A client tool whose final Claude name equals the anchor name, directly, after
+// name normalization, or as a discovered tool, keeps its declaration and the
+// request carries no second tool with that name.
+func TestConvertOpenAIResponsesRequestToClaude_DeferredAnchorYieldsToClientToolName(t *testing.T) {
+	declared := func(name string) string {
+		return `{"type":"function","name":"` + name + `","description":"Client tool.","parameters":{"type":"object","properties":{}}}`
+	}
+	discovered := `{"type":"tool_search_output","call_id":"call_search_1","status":"completed","execution":"client","tools":[{"type":"function","name":"` +
+		responsesDeferredAnchorName + `","description":"Client tool.","defer_loading":true,"parameters":{"type":"object","properties":{}}}]}`
+	for name, request := range map[string][]byte{
+		"exact declared name": []byte(`{"model":"claude-sonnet-4-5","input":"hi","tools":[` + codexToolSearchDeclaration + `,` + declared(responsesDeferredAnchorName) + `]}`),
+		"normalized name":     []byte(`{"model":"claude-sonnet-4-5","input":"hi","tools":[` + codexToolSearchDeclaration + `,` + declared("tool.search.deferred.anchor") + `]}`),
+		"discovered tool":     codexToolSearchRequest(codexUserTurn, codexSearchCall1, discovered),
+	} {
+		req := convertToolSearchRequest(t, request)
+		matches := req.Get(`tools.#(name=="` + responsesDeferredAnchorName + `")#`).Array()
+		if len(matches) != 1 || matches[0].Get("description").String() != "Client tool." {
+			t.Fatalf("%s: tools = %s, want only the client tool under the anchor name", name, req.Get("tools").Raw)
+		}
+	}
+}
+
+// Without native tool search nothing is deferred, so no anchor is declared.
+func TestConvertOpenAIResponsesRequestToClaude_NoDeferredAnchorWithoutNativeToolSearch(t *testing.T) {
+	userFunction := `{"type":"function","name":"tool_search","parameters":{"type":"object","properties":{"q":{"type":"string"}}}}`
+	for name, request := range map[string][]byte{
+		"no tool_search":          []byte(`{"model":"claude-sonnet-4-5","input":"hi","tools":[` + codexExecCommandTool + `,` + codexDeferredTool + `]}`),
+		"user function wins name": []byte(`{"model":"claude-sonnet-4-5","input":"hi","tools":[` + userFunction + `,` + codexToolSearchDeclaration + `,` + codexDeferredTool + `]}`),
+	} {
+		req := convertToolSearchRequest(t, request)
+		if strings.Contains(req.Get("tools").Raw, responsesDeferredAnchorName) {
+			t.Fatalf("%s: anchor declared without native tool search: %s", name, req.Get("tools").Raw)
+		}
+	}
+	out, err := ConvertOpenAIResponsesRequestToClaude("claude-sonnet-4-5", codexToolSearchRequest(codexUserTurn), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setClientToolSearchEnabledForTest(t, false)
+	off, err := ConvertOpenAIResponsesRequestToClaude("claude-sonnet-4-5", codexToolSearchRequest(codexUserTurn), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), responsesDeferredAnchorName) || strings.Contains(string(off), responsesDeferredAnchorName) {
+		t.Fatalf("switch on/off: on=%s off=%s", ojson.GetBytesNoCopy(out, "tools").Raw, ojson.GetBytesNoCopy(off, "tools").Raw)
 	}
 }

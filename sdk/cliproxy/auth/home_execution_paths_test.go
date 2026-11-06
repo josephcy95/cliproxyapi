@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"sync"
@@ -607,8 +608,17 @@ func (*retryingHomeStreamExecutor) HttpRequest(context.Context, *Auth, *http.Req
 	return nil, nil
 }
 
+type rotatingHomeStreamDispatcher struct {
+	retainingHomeExecutionDispatcher
+}
+
+func (d *rotatingHomeStreamDispatcher) RPopAuth(context.Context, string, string, http.Header, int) ([]byte, error) {
+	n := d.calls.Add(1)
+	return json.Marshal(homeAuthDispatchResponse{Auth: Auth{ID: fmt.Sprintf("home-stream-%d", n), Provider: "home-execution", Status: StatusActive}})
+}
+
 func TestHomeStreamRetryUsesFreshSelection(t *testing.T) {
-	dispatcher := &retainingHomeExecutionDispatcher{}
+	dispatcher := &rotatingHomeStreamDispatcher{}
 	manager := NewManager(nil, nil, nil)
 	manager.SetConfig(&internalconfig.Config{Home: internalconfig.HomeConfig{Enabled: true}})
 	manager.PublishHomeDispatch(dispatcher, executionregistry.New(), 1)

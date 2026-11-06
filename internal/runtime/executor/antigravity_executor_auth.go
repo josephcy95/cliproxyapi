@@ -75,7 +75,7 @@ func (e *AntigravityExecutor) ensureAccessToken(ctx context.Context, auth *clipr
 	}
 	accessToken := metaStringValue(auth.Metadata, "access_token")
 	expiry := tokenExpiry(auth.Metadata)
-	if accessToken != "" && expiry.After(time.Now().Add(refreshSkew)) {
+	if accessToken != "" && expiry.After(time.Now().Add(antigravityRequestTokenSafetyWindow)) {
 		e.maybeRefreshAntigravityCreditsHint(ctx, auth, accessToken)
 		return accessToken, nil, nil
 	}

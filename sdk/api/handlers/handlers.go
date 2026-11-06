@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
@@ -25,7 +26,7 @@ import (
 	coresession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"github.com/tidwall/gjson"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/httptransport"
 	"golang.org/x/net/context"
 )
 
@@ -278,6 +279,9 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	if selectedCallback := selectedAuthIDCallbackFromContext(ctx); selectedCallback != nil {
 		meta[coreexecutor.SelectedAuthCallbackMetadataKey] = selectedCallback
 	}
+	if finalizedFormatCallback := finalizedResponseFormatCallbackFromContext(ctx); finalizedFormatCallback != nil {
+		meta[coreexecutor.FinalizedResponseFormatCallbackMetadataKey] = finalizedFormatCallback
+	}
 	if ginCtx != nil && !websocket.IsWebSocketUpgrade(ginCtx.Request) {
 		if traceCallback := logging.GinCPATraceIDCallback(ginCtx); traceCallback != nil {
 			meta[coreexecutor.SelectedAuthIndexCallbackMetadataKey] = traceCallback
@@ -353,6 +357,28 @@ func requestCallerScope(ginCtx *gin.Context) string {
 	return coresession.CallerScope(fmt.Sprint(value))
 }
 
+func addCallerScopeMetadata(meta map[string]any, callerScope string) {
+	if meta == nil {
+		return
+	}
+	callerScope = strings.TrimSpace(callerScope)
+	if callerScope == "" {
+		return
+	}
+	meta[coreexecutor.CallerScopeMetadataKey] = callerScope
+}
+
+func callerScopeFromMetadata(meta map[string]any) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	value, ok := meta[coreexecutor.CallerScopeMetadataKey].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
 func addAuthSelectionModelMetadata(meta map[string]any, model string) {
 	if meta == nil {
 		return
@@ -380,11 +406,11 @@ func setServiceTierMetadata(meta map[string]any, rawJSON []byte) {
 		return
 	}
 	serviceTier := coreusage.AutoServiceTier
-	node := gjson.GetBytes(rawJSON, "service_tier")
+	node := ojson.GetBytesNoCopy(rawJSON, "service_tier")
 	if node.Exists() {
 		value := strings.TrimSpace(node.String())
 		if value != "" {
-			serviceTier = value
+			serviceTier = strings.Clone(value)
 		}
 	}
 	meta[coreexecutor.ServiceTierMetadataKey] = serviceTier
@@ -396,7 +422,7 @@ func setGenerateMetadata(meta map[string]any, rawJSON []byte) {
 	}
 	// Missing or true means generation is enabled; only an explicit false disables generation.
 	generate := true
-	node := gjson.GetBytes(rawJSON, "generate")
+	node := ojson.GetBytesNoCopy(rawJSON, "generate")
 	if node.Exists() && node.IsBool() && !node.Bool() {
 		generate = false
 	}
@@ -407,6 +433,8 @@ func setGenerateMetadata(meta map[string]any, rawJSON []byte) {
 // It holds a pool of clients to interact with the backend service and manages
 // load balancing, client selection, and configuration.
 type BaseAPIHandler struct {
+	runtimeMu sync.RWMutex
+
 	// AuthManager manages auth lifecycle and execution in the new architecture.
 	AuthManager *coreauth.Manager
 
@@ -443,7 +471,25 @@ func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager) *B
 // Parameters:
 //   - clients: The new slice of AI service clients
 //   - cfg: The new application configuration
-func (h *BaseAPIHandler) UpdateClients(cfg *config.SDKConfig) { h.Cfg = cfg }
+func (h *BaseAPIHandler) UpdateClients(cfg *config.SDKConfig) {
+	if h == nil {
+		return
+	}
+	h.runtimeMu.Lock()
+	h.Cfg = cfg
+	h.runtimeMu.Unlock()
+}
+
+// CurrentConfig returns the current application configuration snapshot.
+func (h *BaseAPIHandler) CurrentConfig() *config.SDKConfig {
+	if h == nil {
+		return nil
+	}
+	h.runtimeMu.RLock()
+	cfg := h.Cfg
+	h.runtimeMu.RUnlock()
+	return cfg
+}
 
 // SetPluginHost configures the optional plugin interceptor host.
 func (h *BaseAPIHandler) SetPluginHost(host PluginInterceptorHost) {
@@ -451,10 +497,11 @@ func (h *BaseAPIHandler) SetPluginHost(host PluginInterceptorHost) {
 		return
 	}
 	if isNilPluginInterceptorHost(host) {
-		h.PluginHost = nil
-		return
+		host = nil
 	}
+	h.runtimeMu.Lock()
 	h.PluginHost = host
+	h.runtimeMu.Unlock()
 }
 
 // SetModelRouterHost configures the optional plugin model router host.
@@ -463,10 +510,25 @@ func (h *BaseAPIHandler) SetModelRouterHost(host PluginModelRouterHost) {
 		return
 	}
 	if isNilPluginModelRouterHost(host) {
-		h.ModelRouterHost = nil
-		return
+		host = nil
 	}
+	h.runtimeMu.Lock()
 	h.ModelRouterHost = host
+	h.runtimeMu.Unlock()
+}
+
+// ModelRouterHostSnapshot returns the configured plugin model router host snapshot.
+func (h *BaseAPIHandler) ModelRouterHostSnapshot() PluginModelRouterHost {
+	if h == nil {
+		return nil
+	}
+	h.runtimeMu.RLock()
+	host := h.ModelRouterHost
+	h.runtimeMu.RUnlock()
+	if isNilPluginModelRouterHost(host) {
+		return nil
+	}
+	return host
 }
 
 func isNilPluginInterceptorHost(host PluginInterceptorHost) bool {
@@ -535,6 +597,9 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		requestCtx = c.Request.Context()
 	}
 
+	if requestCtx != nil {
+		parentCtx = httptransport.InheritDecorator(parentCtx, requestCtx)
+	}
 	if requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
 		if requestID := logging.GetRequestID(requestCtx); requestID != "" {
 			parentCtx = logging.WithRequestID(parentCtx, requestID)
@@ -587,12 +652,14 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		}()
 	}
 	newCtx = context.WithValue(newCtx, "gin", c)
+	newCtx = coreusage.CaptureIdentity(newCtx)
+	newCtx = coreauth.WithCodexClientRequest(newCtx, coreauth.IsCodexClientRequest(newCtx))
 	newCtx = context.WithValue(newCtx, "handler", handler)
 	return newCtx, func(params ...interface{}) {
 		if c != nil {
 			logging.SetResponseStatus(cancelCtx, c.Writer.Status())
 		}
-		if h.Cfg.RequestLog && len(params) == 1 {
+		if cfg := h.CurrentConfig(); cfg != nil && cfg.RequestLog && len(params) == 1 {
 			if captured, exists := c.Get(logging.APIResponseCapturedContextKey); exists {
 				if capturedBool, ok := captured.(bool); ok && capturedBool {
 					cancel()
@@ -644,7 +711,7 @@ func (h *BaseAPIHandler) StartNonStreamingKeepAlive(c *gin.Context, ctx context.
 	if h == nil || c == nil {
 		return func() {}
 	}
-	interval := NonStreamingKeepAliveInterval(h.Cfg)
+	interval := NonStreamingKeepAliveInterval(h.CurrentConfig())
 	if interval <= 0 {
 		return func() {}
 	}

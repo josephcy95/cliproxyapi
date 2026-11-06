@@ -225,7 +225,7 @@ func (h *GeminiAPIHandler) handleStreamGenerateContent(c *gin.Context, modelName
 	var keepAliveC <-chan time.Time
 	stopKeepAlive := func() {}
 	if alt == "" {
-		keepAliveC, stopKeepAlive = handlers.NewPreFirstTokenKeepAliveTicker(h.Cfg)
+		keepAliveC, stopKeepAlive = handlers.NewPreFirstTokenKeepAliveTicker(h.CurrentConfig())
 	}
 	defer stopKeepAlive()
 
@@ -384,6 +384,7 @@ func (h *GeminiAPIHandler) forwardGeminiStream(c *gin.Context, flusher http.Flus
 			if errMsg == nil {
 				return
 			}
+			h.LoggingAPIResponseError(c, errMsg)
 			status := http.StatusInternalServerError
 			if errMsg.StatusCode > 0 {
 				status = errMsg.StatusCode

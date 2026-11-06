@@ -9,7 +9,14 @@ import (
 const maxStableSessionAliases = 64
 
 // sessionEntry stores an auth binding, its identifier aliases, and expiration.
+type sessionBinding struct {
+	sessionID string
+	provider  string
+	sequence  uint64
+}
+
 type sessionEntry struct {
+	binding   sessionBinding
 	authID    string
 	expiresAt time.Time
 	aliases   []string
@@ -17,11 +24,12 @@ type sessionEntry struct {
 
 // SessionCache provides TTL-based session to auth mapping with automatic cleanup.
 type SessionCache struct {
-	mu       sync.RWMutex
-	entries  map[string]sessionEntry
-	ttl      time.Duration
-	stopCh   chan struct{}
-	stopOnce sync.Once
+	bindingSequence uint64
+	mu              sync.RWMutex
+	entries         map[string]sessionEntry
+	ttl             time.Duration
+	stopCh          chan struct{}
+	stopOnce        sync.Once
 }
 
 // NewSessionCache creates a cache with the specified TTL.
@@ -101,39 +109,20 @@ func (c *SessionCache) Set(sessionID, authID string) {
 
 // SetAliases binds multiple identifiers for one logical session to an auth ID.
 func (c *SessionCache) SetAliases(authID string, sessionIDs ...string) {
-	if authID == "" {
-		return
-	}
-	now := time.Now()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	aliases := mergeSessionAliases(nil, sessionIDs...)
-	previousGroups := make([]sessionEntry, 0, len(sessionIDs))
-	for _, sessionID := range sessionIDs {
-		entry, ok := c.entries[sessionID]
-		if !ok {
-			continue
-		}
-		if !now.Before(entry.expiresAt) {
-			c.removeAliasGroupLocked(entry)
-			continue
-		}
-		previousGroups = append(previousGroups, entry)
-		aliases = mergeSessionAliases(aliases, entry.aliases...)
-	}
-	aliases = compactSessionAliases(aliases)
-	if len(aliases) == 0 {
-		return
-	}
-	c.replaceAliasGroupsLocked(authID, now.Add(c.ttl), aliases, previousGroups...)
+	c.setAliases(authID, sessionBinding{}, sessionIDs...)
 }
 
 func (c *SessionCache) replaceAliasGroupsLocked(authID string, expiresAt time.Time, aliases []string, previousGroups ...sessionEntry) {
 	for _, previous := range previousGroups {
 		c.removeAliasGroupLocked(previous)
 	}
-	entry := sessionEntry{authID: authID, expiresAt: expiresAt, aliases: aliases}
+	var binding sessionBinding
+	for _, previous := range previousGroups {
+		if previous.binding.sequence > binding.sequence {
+			binding = previous.binding
+		}
+	}
+	entry := sessionEntry{authID: authID, expiresAt: expiresAt, aliases: aliases, binding: binding}
 	for _, alias := range aliases {
 		c.entries[alias] = entry
 	}
@@ -354,4 +343,74 @@ func (c *SessionCache) cleanup() {
 		}
 	}
 	c.mu.Unlock()
+}
+
+func (c *SessionCache) setAliases(authID string, binding sessionBinding, sessionIDs ...string) {
+	if c == nil || authID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+
+	aliases := mergeSessionAliases(nil, sessionIDs...)
+	previousGroups := make([]sessionEntry, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		entry, ok := c.entries[sessionID]
+		if !ok {
+			continue
+		}
+		if !now.Before(entry.expiresAt) {
+			c.removeAliasGroupLocked(entry)
+			continue
+		}
+		previousGroups = append(previousGroups, entry)
+		aliases = mergeSessionAliases(aliases, entry.aliases...)
+	}
+	aliases = compactSessionAliases(aliases)
+	if len(aliases) == 0 {
+		return
+	}
+	if binding.sessionID != "" && binding.provider != "" {
+		c.bindingSequence++
+		binding.sequence = c.bindingSequence
+	} else {
+		for _, previous := range previousGroups {
+			if previous.binding.sequence > binding.sequence {
+				binding = previous.binding
+			}
+		}
+	}
+	c.replaceAliasGroupsLocked(authID, now.Add(c.ttl), aliases, previousGroups...)
+	for _, alias := range aliases {
+		entry := c.entries[alias]
+		entry.binding = binding
+		c.entries[alias] = entry
+	}
+}
+
+func (c *SessionCache) setSessionAliases(authID, provider, sessionID string, keys ...string) {
+	c.setAliases(authID, sessionBinding{sessionID: sessionID, provider: provider}, keys...)
+}
+
+func (c *SessionCache) latestSessionAuth(sessionID string, providers map[string]struct{}) string {
+	if c == nil || sessionID == "" || len(providers) == 0 {
+		return ""
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	now := time.Now()
+	var latest sessionEntry
+	for _, entry := range c.entries {
+		if entry.binding.sessionID != sessionID {
+			continue
+		}
+		if _, ok := providers[entry.binding.provider]; !ok || !now.Before(entry.expiresAt) {
+			continue
+		}
+		if entry.binding.sequence > latest.binding.sequence {
+			latest = entry
+		}
+	}
+	return latest.authID
 }

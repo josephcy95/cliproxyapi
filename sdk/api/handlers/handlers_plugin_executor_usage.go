@@ -10,69 +10,11 @@ import (
 )
 
 func parsePluginExecutorResponseUsage(protocol string, payload []byte) usage.Detail {
-	if len(payload) == 0 {
-		return usage.Detail{}
-	}
-	switch strings.ToLower(strings.TrimSpace(protocol)) {
-	case "claude":
-		return parseClaudePayloadUsage(payload)
-	case "gemini":
-		return helps.ParseGeminiUsage(payload)
-	case "interactions", "interactions-response":
-		return helps.ParseInteractionsUsage(payload)
-	case "antigravity":
-		return helps.ParseAntigravityUsage(payload)
-	case "codex", "openai-response":
-		return parseResponsesPluginExecutorUsage(payload)
-	default:
-		return helps.ParseOpenAIUsage(payload)
-	}
+	return helps.ParsePluginExecutorResponseUsage(protocol, payload)
 }
 
 func observePluginExecutorStreamUsage(protocol string, payload []byte, buffer *helps.StreamUsageBuffer) {
-	if buffer == nil || len(payload) == 0 {
-		return
-	}
-	switch strings.ToLower(strings.TrimSpace(protocol)) {
-	case "claude":
-		iterateStreamLines(payload, func(line []byte) {
-			if detail, ok := parseClaudeStreamLine(line); ok {
-				observeMergedStreamUsage(buffer, detail)
-			}
-		})
-	case "gemini":
-		iterateStreamLines(payload, func(line []byte) {
-			if detail, ok := helps.ParseGeminiStreamUsage(line); ok {
-				buffer.Observe(detail, ok)
-			}
-		})
-	case "interactions", "interactions-response":
-		iterateStreamLines(payload, func(line []byte) {
-			if detail, ok := helps.ParseInteractionsStreamUsage(line); ok {
-				observeMergedStreamUsage(buffer, detail)
-			}
-		})
-	case "antigravity":
-		iterateStreamLines(payload, func(line []byte) {
-			if detail, ok := helps.ParseAntigravityStreamUsage(line); ok {
-				buffer.Observe(detail, ok)
-			}
-		})
-	case "codex", "openai-response":
-		iterateStreamLines(payload, func(line []byte) {
-			if jsonBytes := extractStreamJSONPayload(line); len(jsonBytes) > 0 {
-				if detail, ok := helps.ParseCodexUsage(jsonBytes); ok && hasPluginTokenUsage(detail) {
-					buffer.Observe(detail, ok)
-					return
-				}
-			}
-			buffer.ObserveOpenAIStream(line)
-		})
-	default:
-		iterateStreamLines(payload, func(line []byte) {
-			buffer.ObserveOpenAIStream(line)
-		})
-	}
+	helps.ObservePluginExecutorStreamUsage(protocol, payload, buffer)
 }
 
 func parseClaudePayloadUsage(payload []byte) usage.Detail {
@@ -118,49 +60,7 @@ func observeMergedStreamUsage(buffer *helps.StreamUsageBuffer, update usage.Deta
 }
 
 func mergeStreamUsageDetail(existing, update usage.Detail) usage.Detail {
-	merged := update
-	if merged.InputTokens == 0 && existing.InputTokens > 0 {
-		merged.InputTokens = existing.InputTokens
-	}
-	if merged.CachedTokens == 0 && existing.CachedTokens > 0 {
-		merged.CachedTokens = existing.CachedTokens
-	}
-	if merged.CacheReadTokens == 0 && existing.CacheReadTokens > 0 {
-		merged.CacheReadTokens = existing.CacheReadTokens
-	}
-	if merged.CacheCreationTokens == 0 && existing.CacheCreationTokens > 0 {
-		merged.CacheCreationTokens = existing.CacheCreationTokens
-	}
-	if merged.OutputTokens == 0 && existing.OutputTokens > 0 {
-		merged.OutputTokens = existing.OutputTokens
-	}
-	if merged.ReasoningTokens == 0 && existing.ReasoningTokens > 0 {
-		merged.ReasoningTokens = existing.ReasoningTokens
-	}
-	if merged.ResponseServiceTier == "" {
-		merged.ResponseServiceTier = existing.ResponseServiceTier
-	}
-	cached := merged.CacheReadTokens + merged.CacheCreationTokens
-	if cached == 0 {
-		cached = merged.CachedTokens
-	}
-	calculatedTotal := merged.InputTokens + merged.OutputTokens + cached
-	if merged.TotalTokens == 0 || merged.TotalTokens < calculatedTotal {
-		merged.TotalTokens = calculatedTotal
-	}
-	nonReasoningOutput := merged.OutputTokens - merged.ReasoningTokens
-	if nonReasoningOutput < 0 {
-		nonReasoningOutput = 0
-	}
-	merged.TokenBreakdown = usage.NewIndependentTokenBreakdown(
-		merged.InputTokens,
-		merged.CacheReadTokens,
-		merged.CacheCreationTokens,
-		nonReasoningOutput,
-		merged.ReasoningTokens,
-		merged.TotalTokens,
-	)
-	return merged
+	return helps.MergeStreamUsageDetail(existing, update)
 }
 
 func iterateStreamLines(payload []byte, fn func(line []byte)) {
@@ -216,4 +116,21 @@ func parseResponsesPluginExecutorUsage(payload []byte) usage.Detail {
 
 func hasPluginTokenUsage(d usage.Detail) bool {
 	return d.InputTokens != 0 || d.OutputTokens != 0 || d.TotalTokens != 0 || d.CachedTokens != 0 || d.ReasoningTokens != 0 || d.CacheReadTokens != 0 || d.CacheCreationTokens != 0
+}
+
+func observePluginExecutorStreamTTFT(protocol string, reporter *helps.UsageReporter, payload []byte) {
+	if reporter == nil || len(payload) == 0 {
+		return
+	}
+	reporter.RecordFirstPacket()
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "claude":
+		helps.ObserveClaudeTokenEvent(reporter, payload)
+	case "gemini", "antigravity", "interactions", "interactions-response":
+		helps.ObserveGeminiTokenEvent(reporter, payload)
+	case "codex", "openai-response":
+		helps.ObserveResponsesTokenEvent(reporter, payload)
+	default:
+		helps.ObserveChatTokenEvent(reporter, payload)
+	}
 }

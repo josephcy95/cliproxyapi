@@ -7,11 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestCodexExecutorExecuteNormalizesNullInstructions(t *testing.T) {
@@ -45,11 +45,11 @@ func TestCodexExecutorExecuteNormalizesNullInstructions(t *testing.T) {
 	if gotPath != "/responses" {
 		t.Fatalf("path = %q, want %q", gotPath, "/responses")
 	}
-	if gjson.GetBytes(gotBody, "instructions").Type != gjson.String {
-		t.Fatalf("instructions type = %v, want string", gjson.GetBytes(gotBody, "instructions").Type)
+	if ojson.GetBytes(gotBody, "instructions").Type != ojson.String {
+		t.Fatalf("instructions type = %v, want string", ojson.GetBytes(gotBody, "instructions").Type)
 	}
-	if gjson.GetBytes(gotBody, "instructions").String() != "" {
-		t.Fatalf("instructions = %q, want empty string", gjson.GetBytes(gotBody, "instructions").String())
+	if ojson.GetBytes(gotBody, "instructions").String() != "" {
+		t.Fatalf("instructions = %q, want empty string", ojson.GetBytes(gotBody, "instructions").String())
 	}
 }
 
@@ -86,11 +86,11 @@ func TestCodexExecutorExecuteStreamNormalizesNullInstructions(t *testing.T) {
 	if gotPath != "/responses" {
 		t.Fatalf("path = %q, want %q", gotPath, "/responses")
 	}
-	if gjson.GetBytes(gotBody, "instructions").Type != gjson.String {
-		t.Fatalf("instructions type = %v, want string", gjson.GetBytes(gotBody, "instructions").Type)
+	if ojson.GetBytes(gotBody, "instructions").Type != ojson.String {
+		t.Fatalf("instructions type = %v, want string", ojson.GetBytes(gotBody, "instructions").Type)
 	}
-	if gjson.GetBytes(gotBody, "instructions").String() != "" {
-		t.Fatalf("instructions = %q, want empty string", gjson.GetBytes(gotBody, "instructions").String())
+	if ojson.GetBytes(gotBody, "instructions").String() != "" {
+		t.Fatalf("instructions = %q, want empty string", ojson.GetBytes(gotBody, "instructions").String())
 	}
 }
 
@@ -132,7 +132,7 @@ func TestApplyCodexConfiguredInstructionsPrependsForOAuthMatchingModel(t *testin
 	auth := &cliproxyauth.Auth{Provider: "codex", Metadata: map[string]any{"type": "codex", "allow_private_instructions": true}, Attributes: map[string]string{
 		"allow_private_instructions": "true",
 		"base_url": captureCodexInstructionsServer(t, func(body []byte) {
-			got := gjson.GetBytes(body, "instructions").String()
+			got := ojson.GetBytesNoCopy(body, "instructions").String()
 			want := "private prefs\n\nbase instructions"
 			if got != want {
 				t.Fatalf("instructions = %q, want %q", got, want)
@@ -160,7 +160,7 @@ func TestApplyCodexConfiguredInstructionsSkipsAPIKeyAuth(t *testing.T) {
 	}}})
 	auth := &cliproxyauth.Auth{Attributes: map[string]string{
 		"base_url": captureCodexInstructionsServer(t, func(body []byte) {
-			if got := gjson.GetBytes(body, "instructions").String(); got != "base instructions" {
+			if got := ojson.GetBytesNoCopy(body, "instructions").String(); got != "base instructions" {
 				t.Fatalf("instructions = %q, want base instructions", got)
 			}
 		}),
@@ -184,7 +184,7 @@ func TestApplyCodexConfiguredInstructionsSkipsNonMatchingModel(t *testing.T) {
 	}}})
 	auth := &cliproxyauth.Auth{Provider: "codex", Metadata: map[string]any{"type": "codex"}, Attributes: map[string]string{
 		"base_url": captureCodexInstructionsServer(t, func(body []byte) {
-			if got := gjson.GetBytes(body, "instructions").String(); got != "base instructions" {
+			if got := ojson.GetBytesNoCopy(body, "instructions").String(); got != "base instructions" {
 				t.Fatalf("instructions = %q, want base instructions", got)
 			}
 		}),
@@ -208,7 +208,7 @@ func TestApplyCodexConfiguredInstructionsSkipsWithoutPrivateMarker(t *testing.T)
 	auth := &cliproxyauth.Auth{Provider: "codex", Metadata: map[string]any{"type": "codex", "allow_private_instructions": true}, Attributes: map[string]string{
 		"allow_private_instructions": "true",
 		"base_url": captureCodexInstructionsServer(t, func(body []byte) {
-			if got := gjson.GetBytes(body, "instructions").String(); got != "base instructions" {
+			if got := ojson.GetBytesNoCopy(body, "instructions").String(); got != "base instructions" {
 				t.Fatalf("instructions = %q, want base instructions", got)
 			}
 		}),
@@ -231,7 +231,7 @@ func TestApplyCodexConfiguredInstructionsSkipsUnmarkedAuth(t *testing.T) {
 	}}})
 	auth := &cliproxyauth.Auth{Provider: "codex", Metadata: map[string]any{"type": "codex"}, Attributes: map[string]string{
 		"base_url": captureCodexInstructionsServer(t, func(body []byte) {
-			if got := gjson.GetBytes(body, "instructions").String(); got != "base instructions" {
+			if got := ojson.GetBytesNoCopy(body, "instructions").String(); got != "base instructions" {
 				t.Fatalf("instructions = %q, want base instructions", got)
 			}
 		}),

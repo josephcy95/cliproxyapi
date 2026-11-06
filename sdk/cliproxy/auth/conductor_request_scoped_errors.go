@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 // Request-scoped error actions.
@@ -147,6 +148,9 @@ func extractRequestScopedErrorRules(auth *Auth, cfg *internalconfig.Config) []in
 		}
 	}
 
+	if auth.AuthKind() == AuthKindOAuth {
+		return cfg.OAuthRequestScopedErrors[provider]
+	}
 	return nil
 }
 
@@ -174,7 +178,7 @@ func extractErrorBody(err error) string {
 // If a rule matches, it returns (action, true).
 // If no rule matches, it returns ("", false).
 func matchRequestScopedErrorAction(auth *Auth, err error, cfg *internalconfig.Config) (string, bool) {
-	if err == nil {
+	if err == nil || cliproxyexecutor.IsUpstreamWebsocketTurnError(err) {
 		return "", false
 	}
 	rules := extractRequestScopedErrorRules(auth, cfg)
