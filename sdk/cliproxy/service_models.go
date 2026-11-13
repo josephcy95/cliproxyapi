@@ -1438,6 +1438,7 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 			seen[aliasKey] = struct{}{}
 			clone := cloneModelInfoForCatalogRoute(model)
 			clone.ID = mappedID
+			clone.HiddenFromList = false
 			if model.MetadataModelID != "" {
 				clone.MetadataModelID = model.MetadataModelID
 			} else {

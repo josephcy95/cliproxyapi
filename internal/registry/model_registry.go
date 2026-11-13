@@ -38,6 +38,11 @@ type NativeCapabilities struct {
 
 // ModelInfo represents information about an available model
 type ModelInfo struct {
+	// HiddenFromList keeps legacy routing IDs usable without advertising them.
+	HiddenFromList bool `json:"-"`
+	// AntigravityEffortModels maps supported efforts to account-entitled wire IDs.
+	AntigravityEffortModels  map[string]string `json:"-"`
+	AntigravityDefaultEffort string            `json:"-"`
 	// ID is the unique identifier for the model
 	ID string `json:"id"`
 	// MetadataModelID identifies the canonical model used to resolve client metadata.
@@ -834,6 +839,12 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 		return nil
 	}
 	copyModel := *model
+	if model.AntigravityEffortModels != nil {
+		copyModel.AntigravityEffortModels = make(map[string]string, len(model.AntigravityEffortModels))
+		for effort, id := range model.AntigravityEffortModels {
+			copyModel.AntigravityEffortModels[effort] = id
+		}
+	}
 	if model.NativeCapabilities != nil {
 		copyCapabilities := *model.NativeCapabilities
 		if model.NativeCapabilities.WebSearch != nil {
@@ -1549,7 +1560,7 @@ func (r *ModelRegistry) GetAvailableModelInfos() []*ModelInfo {
 	result := make([]*ModelInfo, 0, len(r.models))
 	for _, registration := range r.models {
 		available, _ := modelRegistrationAvailability(registration, now)
-		if !available || registration == nil || registration.Info == nil {
+		if !available || registration == nil || registration.Info == nil || registration.Info.HiddenFromList {
 			continue
 		}
 		result = append(result, cloneModelInfo(registration.Info))
@@ -1820,7 +1831,7 @@ func (r *ModelRegistry) GetModelInfo(modelID, provider string) *ModelInfo {
 
 // convertModelToMap converts ModelInfo to the appropriate format for different handler types
 func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) map[string]any {
-	if model == nil {
+	if model == nil || model.HiddenFromList {
 		return nil
 	}
 

@@ -482,7 +482,7 @@ func filterAntigravityModels(models []*ModelInfo, hints antigravityModelCapabili
 			}
 		}
 	}
-	return filtered
+	return registry.ExpandAntigravityEffortModels(filtered, models, hints.ModelIDs)
 }
 
 func (s *Service) antigravityModelsForHints(auth *coreauth.Auth, hints antigravityModelCapabilityHints) []*ModelInfo {
@@ -502,6 +502,8 @@ func (s *Service) antigravityModelsForHintsWithConfig(auth *coreauth.Auth, hints
 	if value := strings.TrimSpace(auth.Attributes["excluded_models"]); value != "" {
 		excluded = strings.Split(value, ",")
 	}
+	models = applyExcludedModels(models, excluded)
+	models = registry.GroupAntigravityEffortModels(models)
 	models = applyExcludedModels(models, excluded)
 	models = applyOAuthModelAliasForAuth(cfg, "antigravity", auth.AuthKind(), auth.Attributes, models)
 	models = s.appendPluginModels("antigravity", models, excluded)

@@ -391,6 +391,9 @@ func (h *Handler) GetAuthFileModels(c *gin.Context) {
 
 	result := make([]gin.H, 0, len(models))
 	for _, m := range models {
+		if m.HiddenFromList {
+			continue
+		}
 		entry := gin.H{
 			"id": m.ID,
 		}

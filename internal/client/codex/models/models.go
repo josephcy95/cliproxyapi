@@ -162,6 +162,20 @@ func buildCodexClientModelsWithToolCapabilities(models []map[string]any, provide
 		result = append(result, entry)
 	}
 
+	for _, entry := range result {
+		info := registry.LookupModelInfo(stringModelValue(entry, "slug"))
+		if info == nil || len(info.AntigravityEffortModels) == 0 {
+			continue
+		}
+		effort := normalizeCodexClientReasoningLevel(info.AntigravityDefaultEffort, clientVersion)
+		levels, _ := entry["supported_reasoning_levels"].([]any)
+		for _, raw := range levels {
+			if level, ok := raw.(map[string]any); ok && level["effort"] == effort {
+				entry["default_reasoning_level"] = effort
+				break
+			}
+		}
+	}
 	applyCodexClientNonTemplatePriorities(result, templates)
 
 	sort.SliceStable(result, func(i, j int) bool {

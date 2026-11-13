@@ -91,6 +91,16 @@ func (e *AntigravityExecutor) buildRequestDoc(ctx context.Context, auth *cliprox
 
 	applyAntigravityNativeSignatureReplayIfNeededDoc(modelName, doc)
 	helps.FinalizePayloadDoc(ctx, doc)
+	// Resolve after payload rules so the wire ID agrees with the final effort.
+	routeAuthID := ""
+	if auth != nil {
+		routeAuthID = auth.ID
+	}
+	wireModel, errModel := helps.ResolveAntigravityEffortModel(routeAuthID, doc.Get("model").String(), doc)
+	if errModel != nil {
+		return nil, nil, statusErr{code: http.StatusBadRequest, msg: errModel.Error()}
+	}
+	helps.SetStringIfDifferentDoc(doc, "model", wireModel)
 	finalPayload := doc.Bytes()
 	var (
 		bodyReader io.Reader = bytes.NewReader(finalPayload)
