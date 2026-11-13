@@ -76,15 +76,13 @@ func TestClient_RemoteServerInteraction(t *testing.T) {
 	defer ts.Close()
 
 	client := NewClientWithBaseURL(ts.URL, "remote-secret-key")
-	cfg, err := client.GetConfig()
+	_, err := client.GetConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg["status"] != "ok" {
-		t.Fatalf("expected status ok, got %v", cfg["status"])
-	}
-	if requestedPath != "/v0/management/config" {
-		t.Fatalf("expected path /v0/management/config, got %q", requestedPath)
+	// The client prefers the v8 contract; it must reach the v8 config route.
+	if requestedPath != "/v8/management/config" {
+		t.Fatalf("expected path /v8/management/config, got %q", requestedPath)
 	}
 	if authHeader != "Bearer remote-secret-key" {
 		t.Fatalf("expected Authorization Bearer remote-secret-key, got %q", authHeader)
@@ -165,4 +163,39 @@ func indexString(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+func TestClientCommandCodeKeysPreserveV8AndLegacyContracts(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "v8", true: "legacy"}[legacy], func(t *testing.T) {
+			var paths []string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/v8/management/config/api-keys/commandcode":
+					if legacy {
+						http.NotFound(w, r)
+						return
+					}
+					_, _ = w.Write([]byte(`[{"prefix":"cc","base-url":"https://fixture.invalid","keys":[{"api-key":"fixture-key"}]}]`))
+				case "/v8/management/config":
+					http.NotFound(w, r)
+				case "/v0/management/commandcode-api-key":
+					_, _ = w.Write([]byte(`{"commandcode-api-key":[{"api-key":"fixture-key","prefix":"cc","base-url":"https://fixture.invalid"}]}`))
+				default:
+					t.Errorf("unexpected route %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer ts.Close()
+			entries, err := NewClientWithBaseURL(ts.URL, "fixture-management").GetCommandCodeKeys()
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("entries=%v err=%v paths=%v", entries, err, paths)
+			}
+			if entries[0]["api-key"] != "fixture-key" || entries[0]["prefix"] != "cc" || entries[0]["base-url"] != "https://fixture.invalid" {
+				t.Fatalf("lost CommandCode group fields: %v", entries)
+			}
+		})
+	}
 }

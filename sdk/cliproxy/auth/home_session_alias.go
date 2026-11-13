@@ -250,7 +250,7 @@ func isHierarchyParent(primary, fallback string) bool {
 }
 
 func (m *Manager) homeDispatchSessionIDs(opts cliproxyexecutor.Options) (string, string) {
-	primary, fallback := extractSessionIDs(opts.Headers, opts.OriginalRequest, opts.Metadata)
+	primary, fallback := extractExplicitSessionIDs(opts.Headers, opts.OriginalRequest, opts.Metadata)
 	hasAuthoritativeInput := primary != ""
 	if primary == "" {
 		if canonicalID, ok := opts.Metadata[cliproxyexecutor.CanonicalSessionIDMetadataKey].(string); ok && strings.TrimSpace(canonicalID) != "" {

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -126,5 +127,37 @@ func TestXAIStatusErr_EmptyBodyForbiddenUnchanged(t *testing.T) {
 	err := xaiStatusErr(http.StatusForbidden, nil, nil)
 	if err.StatusCode() != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", err.StatusCode())
+	}
+}
+
+func TestXAITerminalFailurePreservesForkStatusAndPolicy(t *testing.T) {
+	for _, autoDisable := range []bool{true, false} {
+		hours := 7
+		cfg := &config.Config{XAI: config.XAIConfig{AutoDisablePermissionDenied: &autoDisable, OtherForbiddenCooldownHours: &hours}}
+		for _, tc := range []struct {
+			name, body string
+			status     int
+		}{
+			{"top status", `{"type":"error","http_status":403,"error":{"message":"access denied."}}`, 403},
+			{"nested status", `{"type":"error","error":{"http_status":403,"message":"access denied."}}`, 403},
+			{"response status", `{"type":"response.failed","response":{"error":{"http_status":403,"message":"access denied."}}}`, 403},
+			{"permission message", `{"type":"error","error":{"message":"access denied."}}`, 403},
+			{"token status", `{"type":"error","http_status":401,"error":{"message":"invalid or expired token"}}`, 401},
+			{"token message", `{"type":"error","error":{"message":"invalid or expired token"}}`, 401},
+		} {
+			t.Run(fmt.Sprintf("%s/auto-disable=%t", tc.name, autoDisable), func(t *testing.T) {
+				err, terminal := xaiTerminalFailureErr("", []byte(tc.body), cfg)
+				if !terminal || err.StatusCode() != tc.status {
+					t.Fatalf("terminal=%v status=%d want %d", terminal, err.StatusCode(), tc.status)
+				}
+				if tc.status == 403 && !autoDisable {
+					if err.RetryAfter() == nil || *err.RetryAfter() != 7*time.Hour {
+						t.Fatalf("cooldown=%v want 7h", err.RetryAfter())
+					}
+				} else if err.RetryAfter() != nil {
+					t.Fatalf("unexpected cooldown %v", err.RetryAfter())
+				}
+			})
+		}
 	}
 }

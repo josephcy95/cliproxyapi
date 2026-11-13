@@ -85,6 +85,7 @@ func buildV8Paths() []configPath {
 		{"host", "server.host"}, {"port", "server.port"}, {"max-request-body-bytes", "server.max-request-body-bytes"}, {"github-token", "server.github-token"}, {"trusted-proxies", "server.trusted-proxies"},
 		{"tls", "server.tls"}, {"commercial-mode", "server.commercial-mode"}, {"discovery", "server.discovery"},
 		{"kv-store", "server.kv-store"},
+		{"shutdown-timeout", "server.shutdown-timeout"},
 		{"remote-management", "management"}, {"api-keys", "access.api-keys"},
 		{"credential-concurrency", "credentials.concurrency"}, {"credential-in-flight", "credentials.in-flight"},
 		{"force-model-prefix", "routing.force-model-prefix"},

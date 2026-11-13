@@ -29,6 +29,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestore"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/wstunnel"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/openai"
@@ -57,6 +58,7 @@ type Server struct {
 	// handlers contains the API handlers for processing requests.
 	handlers         *handlers.BaseAPIHandler
 	codexLiveHandler *codexlive.Handler
+	tunnelHub        *wstunnel.Hub
 
 	// cfg holds the current server configuration.
 	cfgMu sync.RWMutex
@@ -161,6 +163,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s := &Server{
 		engine:                       engine,
 		handlers:                     handlers.NewBaseAPIHandlers(effectiveSDKConfig(cfg), authManager),
+		tunnelHub:                    wstunnel.NewHub(wstunnel.Options{}),
 		cfg:                          cfg,
 		accessManager:                accessManager,
 		configFilePath:               configFilePath,
@@ -454,16 +457,35 @@ func (s *Server) Stop(ctx context.Context) error {
 		}
 	}
 
-	// Preserve the fork shutdown contract: allow active HTTP requests to drain.
+	// Preserve graceful draining by default; opt into a bounded drain when configured.
 	var errCloseServer error
 	if s.server != nil {
-		errCloseServer = s.server.Shutdown(ctx)
+		drainTimeout := 0
+		if cfg := s.getConfig(); cfg != nil {
+			drainTimeout = cfg.ShutdownTimeoutSeconds
+		}
+		if drainTimeout > 0 {
+			drainCtx, cancel := context.WithTimeout(ctx, time.Duration(drainTimeout)*time.Second)
+			errCloseServer = s.server.Shutdown(drainCtx)
+			cancel()
+			if errors.Is(errCloseServer, context.DeadlineExceeded) || errors.Is(errCloseServer, context.Canceled) {
+				errCloseServer = nil
+			}
+			if errClose := s.server.Close(); errClose != nil && !errors.Is(errClose, http.ErrServerClosed) && !errors.Is(errClose, net.ErrClosed) && errCloseServer == nil {
+				errCloseServer = errClose
+			}
+		} else {
+			errCloseServer = s.server.Shutdown(ctx)
+		}
 		if errors.Is(errCloseServer, http.ErrServerClosed) || errors.Is(errCloseServer, net.ErrClosed) {
 			errCloseServer = nil
 		}
 	}
 	if s.codexLiveHandler != nil {
 		s.codexLiveHandler.Close()
+	}
+	if s.tunnelHub != nil {
+		s.tunnelHub.Close()
 	}
 	if errCloseServer != nil {
 		return fmt.Errorf("failed to shutdown HTTP server: %v", errCloseServer)

@@ -86,17 +86,22 @@ routing:
     # Non-positive weights exclude the credential while this strategy is active.
     # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.
     # Enable universal session-sticky routing for all clients.
-    # Explicit Claude Code, Codex, OpenCode, and pi session headers are preferred,
-    # followed by prompt_cache_key, Responses conversation IDs, legacy body IDs,
-    # execution or derived session identity, and the existing first-message hash fallback.
-    # Automatic failover is always enabled when bound auth becomes unavailable.
+    # Explicit Claude Code, Codex, OpenCode, pi, and generic (X-Session-ID) session headers
+    # are preferred, followed by prompt_cache_key, Responses conversation IDs, legacy body IDs,
+    # derived session identity, and the existing first-message hash fallback.
+    # Clients whose compaction replaces earlier turns with a summary should send X-Session-ID
+    # or another explicit session identity to keep affinity across compaction.
+    # The rebind policy below controls failover when the bound credential is unavailable.
     # An established binding outranks credential priority: once a session is bound, that
     # credential is kept even if a higher-priority credential recovers. Credential priority
     # still decides cold bindings, requests without a session, and post-failover rebinding.
     session-affinity: false # default: false
     # How long session-to-auth bindings are retained. Default: 1h
     session-affinity-ttl: "1h"
-    # Quota mode keeps session bindings during transient failures.
+    # Keep child sessions on their explicit parent affinity when available.
+    session-affinity-subagents: true
+    # any: rebind on failures; quota: retain bindings during transient failures;
+    # never: keep the established credential and return errors without failover.
     session-affinity-rebind-on: "any"
     force-model-prefix: false
     # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
@@ -218,6 +223,8 @@ oauth:
             # sensitive-words:             # optional: words to obfuscate with zero-width characters in system instructions
             #   - "API"
             #   - "proxy"
+            # sensitive-words-replace:     # optional literal replacements in system instructions
+            #   "sensitive phrase": "replacement"
             # connection-pool:             # optional: upstream HTTP connection pool settings
             #   enabled: false             # whether to enable connection pooling (default: false; set to true to enable connection pooling)
             #   idle-conn-timeout: "30s"   # idle keep-alive timeout (default: 30s, capped at 210s)
@@ -227,6 +234,8 @@ oauth:
         #   sensitive-words:             # optional: words to obfuscate with zero-width characters in system instructions and prompts
         #     - "API"
         #     - "proxy"
+        #   sensitive-words-replace:
+        #     "sensitive phrase": "replacement"
         codex:
             signin-with-chatgpt-identifier: "CLIProxyAPI"
             identity-confuse: false
@@ -326,6 +335,8 @@ access:
         - "your-api-key-2"
         - "your-api-key-3"
 server:
+    # Zero drains active requests under the caller context; positive seconds impose a hard drain budget.
+    shutdown-timeout: 0
     # Negotiated compression only affects buffered HTTP responses; streaming stays incremental.
     response-compression:
         enabled: true
@@ -497,6 +508,8 @@ upstream:
     claude:
         # Enable Responses tool_search and per-credential native capability advertising.
         tool-search: false
+        # Opt in to Anthropic server-side model fallback for cloaked requests.
+        server-side-fallback: false
         model-level-cooling: false
         disable-cloaking-model-list: false
         # When true, return original model IDs in Anthropic model list responses instead of cloaked IDs.

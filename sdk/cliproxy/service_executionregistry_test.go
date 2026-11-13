@@ -1450,7 +1450,8 @@ func TestServiceHeartbeatFailoverDoesNotDrainBlockingScope(t *testing.T) {
 	}
 	select {
 	case <-secondSubscribe:
-	case <-time.After(time.Second):
+	// Allow the heartbeat deadline plus the fork's jittered reconnect backoff.
+	case <-time.After(3 * time.Second):
 		t.Fatal("new subscription did not start while the old scope remained active")
 	}
 	service.homeMu.Lock()
@@ -2859,6 +2860,153 @@ func TestServiceApplyConfigRuntimePreservesSelectorForUnchangedRouting(t *testin
 	}
 }
 
+func TestServiceApplyConfigRuntimeSessionAffinitySubagentsChangeRecreatesSelector(t *testing.T) {
+	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
+	service := &Service{cfg: &config.Config{}, coreManager: manager}
+
+	subagentsEnabled := true
+	initial := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                 "round-robin",
+		SessionAffinity:          true,
+		SessionAffinityTTL:       "1h",
+		SessionAffinitySubagents: &subagentsEnabled,
+	}})
+	if !service.applyConfigRuntime(context.Background(), initial, false) {
+		t.Fatal("initial config runtime apply failed")
+	}
+	initialSelector := manager.Selector()
+
+	subagentsDisabled := false
+	changed := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                 "round-robin",
+		SessionAffinity:          true,
+		SessionAffinityTTL:       "1h",
+		SessionAffinitySubagents: &subagentsDisabled,
+	}})
+	if !service.applyConfigRuntime(context.Background(), changed, false) {
+		t.Fatal("changed config runtime apply failed")
+	}
+	changedSelector := manager.Selector()
+	if changedSelector == initialSelector {
+		t.Fatal("changing SessionAffinitySubagents should recreate selector")
+	}
+}
+
+func TestServiceApplyConfigRuntimeSessionAffinityDisabledSubagentsChangeIsNoOp(t *testing.T) {
+	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
+	service := &Service{cfg: &config.Config{}, coreManager: manager}
+
+	subagentsEnabled := true
+	initial := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                 "round-robin",
+		SessionAffinity:          false,
+		SessionAffinityTTL:       "1h",
+		SessionAffinitySubagents: &subagentsEnabled,
+	}})
+	if !service.applyConfigRuntime(context.Background(), initial, false) {
+		t.Fatal("initial config runtime apply failed")
+	}
+	initialSelector := manager.Selector()
+
+	subagentsDisabled := false
+	changed := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                 "round-robin",
+		SessionAffinity:          false,
+		SessionAffinityTTL:       "1h",
+		SessionAffinitySubagents: &subagentsDisabled,
+	}})
+	if !service.applyConfigRuntime(context.Background(), changed, false) {
+		t.Fatal("changed config runtime apply failed")
+	}
+	changedSelector := manager.Selector()
+	if changedSelector != initialSelector {
+		t.Fatal("toggling SessionAffinitySubagents when SessionAffinity is false must be a no-op")
+	}
+}
+
+func TestServiceApplyConfigRuntimeSessionAffinityRebindOnChangeRecreatesSelector(t *testing.T) {
+	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
+	service := &Service{cfg: &config.Config{}, coreManager: manager}
+
+	initial := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                "round-robin",
+		SessionAffinity:         true,
+		SessionAffinityTTL:      "1h",
+		SessionAffinityRebindOn: "any",
+	}})
+	if !service.applyConfigRuntime(context.Background(), initial, false) {
+		t.Fatal("initial config runtime apply failed")
+	}
+	initialSelector := manager.Selector()
+
+	same := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                "round-robin",
+		SessionAffinity:         true,
+		SessionAffinityTTL:      "1h",
+		SessionAffinityRebindOn: "",
+	}})
+	if !service.applyConfigRuntime(context.Background(), same, false) {
+		t.Fatal("same config runtime apply failed")
+	}
+	if manager.Selector() != initialSelector {
+		t.Fatal("equivalent default SessionAffinityRebindOn should preserve selector")
+	}
+
+	changed := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                "round-robin",
+		SessionAffinity:         true,
+		SessionAffinityTTL:      "1h",
+		SessionAffinityRebindOn: "quota",
+	}})
+	if !service.applyConfigRuntime(context.Background(), changed, false) {
+		t.Fatal("changed config runtime apply failed")
+	}
+	changedSelector := manager.Selector()
+	if changedSelector == initialSelector {
+		t.Fatal("changing SessionAffinityRebindOn should recreate selector")
+	}
+
+	neverCfg := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                "round-robin",
+		SessionAffinity:         true,
+		SessionAffinityTTL:      "1h",
+		SessionAffinityRebindOn: "never",
+	}})
+	if !service.applyConfigRuntime(context.Background(), neverCfg, false) {
+		t.Fatal("never config runtime apply failed")
+	}
+	neverSelector := manager.Selector()
+	if neverSelector == changedSelector {
+		t.Fatal("changing SessionAffinityRebindOn to never should recreate selector")
+	}
+
+	sameNeverCfg := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                "round-robin",
+		SessionAffinity:         true,
+		SessionAffinityTTL:      "1h",
+		SessionAffinityRebindOn: " NEVER ",
+	}})
+	if !service.applyConfigRuntime(context.Background(), sameNeverCfg, false) {
+		t.Fatal("same never config runtime apply failed")
+	}
+	if manager.Selector() != neverSelector {
+		t.Fatal("equivalent never SessionAffinityRebindOn should preserve selector")
+	}
+
+	backToAnyCfg := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
+		Strategy:                "round-robin",
+		SessionAffinity:         true,
+		SessionAffinityTTL:      "1h",
+		SessionAffinityRebindOn: "any",
+	}})
+	if !service.applyConfigRuntime(context.Background(), backToAnyCfg, false) {
+		t.Fatal("back to any config runtime apply failed")
+	}
+	if manager.Selector() == neverSelector {
+		t.Fatal("changing SessionAffinityRebindOn from never to any should recreate selector")
+	}
+}
+
 func TestServiceSerializesHomeAndWatcherConfigRuntimeApply(t *testing.T) {
 	baseCfg := &config.Config{}
 	baseCfg.Home.Enabled = true
@@ -2924,48 +3072,5 @@ func TestServiceSerializesHomeAndWatcherConfigRuntimeApply(t *testing.T) {
 	case <-workerDone:
 	case <-time.After(time.Second):
 		t.Fatal("Home config worker did not stop")
-	}
-}
-
-func TestServiceApplyConfigRuntimeSessionAffinityRebindOnChangeRecreatesSelector(t *testing.T) {
-	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
-	service := &Service{cfg: &config.Config{}, coreManager: manager}
-
-	initial := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
-		Strategy:                "round-robin",
-		SessionAffinity:         true,
-		SessionAffinityTTL:      "1h",
-		SessionAffinityRebindOn: "any",
-	}})
-	if !service.applyConfigRuntime(context.Background(), initial, false) {
-		t.Fatal("initial config runtime apply failed")
-	}
-	initialSelector := manager.Selector()
-
-	same := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
-		Strategy:                "round-robin",
-		SessionAffinity:         true,
-		SessionAffinityTTL:      "1h",
-		SessionAffinityRebindOn: "",
-	}})
-	if !service.applyConfigRuntime(context.Background(), same, false) {
-		t.Fatal("same config runtime apply failed")
-	}
-	if manager.Selector() != initialSelector {
-		t.Fatal("equivalent default SessionAffinityRebindOn should preserve selector")
-	}
-
-	changed := service.commitConfigUpdate(&config.Config{Routing: internalconfig.RoutingConfig{
-		Strategy:                "round-robin",
-		SessionAffinity:         true,
-		SessionAffinityTTL:      "1h",
-		SessionAffinityRebindOn: "quota",
-	}})
-	if !service.applyConfigRuntime(context.Background(), changed, false) {
-		t.Fatal("changed config runtime apply failed")
-	}
-	changedSelector := manager.Selector()
-	if changedSelector == initialSelector {
-		t.Fatal("changing SessionAffinityRebindOn should recreate selector")
 	}
 }

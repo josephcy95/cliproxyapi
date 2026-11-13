@@ -9,6 +9,7 @@ import (
 	"time"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -218,6 +219,120 @@ func (m *Manager) selectionModelKeyForAuth(auth *Auth, routeModel string) string
 	return canonicalModelKey(m.selectionModelForAuth(auth, routeModel))
 }
 
+func (m *Manager) clientModelProjectionForAuth(auth *Auth, routeModel string, now time.Time) registry.ClientModelProjection {
+	targetModel := strings.TrimSpace(routeModel)
+	if targetModel == "" {
+		return registry.ClientModelProjection{}
+	}
+	if auth == nil {
+		return registry.ClientModelProjection{ModelID: targetModel}
+	}
+
+	targetKey := ""
+	if m != nil {
+		targetKey = m.selectionModelKeyForAuth(auth, targetModel)
+	}
+	if targetKey == "" {
+		targetKey = canonicalModelKey(targetModel)
+	}
+
+	state := existingModelState(auth, targetKey)
+	authDisabled := auth.Disabled || auth.Status == StatusDisabled
+	stateDisabled := state != nil && state.Status == StatusDisabled
+	terminalUnauthorized := hasUnauthorizedAuthFailure(auth)
+	openEnded := authDisabled || stateDisabled || terminalUnauthorized
+	isSuspended := openEnded
+
+	var credQuotaUntil time.Time
+	credQuotaSuspended := false
+	if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" {
+		if auth.Quota.NextRecoverAt.IsZero() {
+			isSuspended = true
+			credQuotaSuspended = true
+			openEnded = true
+		} else if auth.Quota.NextRecoverAt.After(now) {
+			isSuspended = true
+			credQuotaSuspended = true
+			credQuotaUntil = auth.Quota.NextRecoverAt
+		}
+	}
+
+	isQuotaExceeded := false
+	stateSuspended := false
+	var stateUntil time.Time
+	if state != nil {
+		if stateDisabled {
+			stateSuspended = true
+		} else if blocked, _, retryAfter := availabilityBlock(state.Unavailable, state.Quota.Exceeded, state.NextRetryAfter, state.Quota.NextRecoverAt, now); blocked {
+			isSuspended = true
+			stateSuspended = true
+			if retryAfter.IsZero() {
+				openEnded = true
+			} else {
+				stateUntil = retryAfter
+			}
+		}
+		if state.Quota.Exceeded && (state.Quota.NextRecoverAt.IsZero() || state.Quota.NextRecoverAt.After(now)) {
+			isQuotaExceeded = true
+		}
+	}
+
+	var authFallbackUntil time.Time
+	if len(auth.ModelStates) == 0 {
+		// With no per-model states, scheduling falls back to the credential-wide
+		// cooldown (isAuthBlockedForModel); the projection must agree with it.
+		// When states exist, unmatched models stay schedulable by design, so the
+		// credential-wide fields must not suspend them here either.
+		if blocked, _, retryAfter := availabilityBlock(auth.Unavailable, auth.Quota.Exceeded, auth.NextRetryAfter, auth.Quota.NextRecoverAt, now); blocked {
+			isSuspended = true
+			if retryAfter.IsZero() {
+				openEnded = true
+			} else {
+				authFallbackUntil = retryAfter
+			}
+		}
+	}
+
+	var suspendReason string
+	var suspendUntil time.Time
+	if isSuspended {
+		switch {
+		case authDisabled || stateDisabled:
+			suspendReason = "disabled"
+		case terminalUnauthorized:
+			suspendReason = cooldownReason(auth.StatusMessage, QuotaState{}, auth.LastError)
+			if suspendReason == "" {
+				suspendReason = "unauthorized"
+			}
+		case stateSuspended:
+			suspendReason = cooldownReason(state.StatusMessage, state.Quota, state.LastError)
+			suspendUntil = stateUntil
+			if credQuotaSuspended && (strings.EqualFold(suspendReason, "quota") || strings.EqualFold(suspendReason, "credential_quota")) && credQuotaUntil.After(suspendUntil) {
+				suspendUntil = credQuotaUntil
+			}
+		default:
+			suspendUntil = authFallbackUntil
+			if credQuotaUntil.After(suspendUntil) {
+				suspendUntil = credQuotaUntil
+			}
+		}
+		if suspendReason == "" {
+			suspendReason = cooldownReason(auth.StatusMessage, auth.Quota, auth.LastError)
+		}
+	}
+	if openEnded || !isSuspended {
+		suspendUntil = time.Time{}
+	}
+
+	return registry.ClientModelProjection{
+		ModelID:       targetModel,
+		Suspended:     isSuspended,
+		SuspendReason: suspendReason,
+		SuspendUntil:  suspendUntil,
+		QuotaExceeded: isQuotaExceeded,
+	}
+}
+
 func (m *Manager) stateModelForExecution(auth *Auth, routeModel, upstreamModel string, pooled bool) string {
 	if auth != nil && auth.Attributes != nil {
 		if homeModel := strings.TrimSpace(auth.Attributes[homeUpstreamModelAttributeKey]); homeModel != "" {
@@ -229,7 +344,7 @@ func (m *Manager) stateModelForExecution(auth *Auth, routeModel, upstreamModel s
 	}
 	stateModel := executionResultModel(routeModel, upstreamModel, pooled)
 	selectionModel := m.selectionModelForAuth(auth, routeModel)
-	if canonicalModelKey(selectionModel) == canonicalModelKey(upstreamModel) && strings.TrimSpace(selectionModel) != "" {
+	if sameCanonicalModelKey(selectionModel, upstreamModel) && strings.TrimSpace(selectionModel) != "" {
 		return strings.TrimSpace(upstreamModel)
 	}
 	return stateModel
@@ -959,4 +1074,24 @@ func asModelAliasEntries[T interface {
 		out = append(out, models[i])
 	}
 	return out
+}
+
+// publishClientModelProjections keeps registry routing consistent with the
+// credential snapshot without changing the spelling of registered model IDs.
+func (m *Manager) publishClientModelProjections(auth *Auth, now time.Time) {
+	if auth == nil {
+		return
+	}
+	reg := registry.GetGlobalRegistry()
+	models, epoch := reg.GetModelsAndEpochForClient(auth.ID)
+	projections := make([]registry.ClientModelProjection, 0, len(models))
+	for _, model := range models {
+		if model == nil || strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		projections = append(projections, m.clientModelProjectionForAuth(auth, model.ID, now))
+	}
+	if len(projections) > 0 {
+		reg.ApplyClientModelProjections(auth.ID, epoch, auth.Generation, projections)
+	}
 }

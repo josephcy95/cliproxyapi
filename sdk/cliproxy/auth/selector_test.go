@@ -205,16 +205,14 @@ func TestAuthWeight_InvalidAndOverflowValuesAreExcluded(t *testing.T) {
 	}
 }
 
-func TestPickSmoothWeightedAuth_SaturatesCorruptState(t *testing.T) {
+func TestSmoothWeightedStateCharge_SaturatesAndClampsCorruptState(t *testing.T) {
 	t.Parallel()
 
-	current := map[string]int64{"a": math.MaxInt64, "b": math.MinInt64}
-	picked := pickSmoothWeightedAuth([]*Auth{{ID: "a"}, {ID: "b"}}, current)
-	if picked == nil {
-		t.Fatal("pickSmoothWeightedAuth() returned nil")
-	}
-	if current["a"] != math.MaxInt64-2 || current["b"] != math.MinInt64+1 {
-		t.Fatalf("current state = %#v, want saturated arithmetic", current)
+	state := weightedPoolForTest("route", map[string]int64{"a": 1, "b": 1}, map[string]int64{"a": math.MaxInt64, "b": math.MinInt64})
+	state.charge(0, false)
+	limit := maxSmoothWeightedCreditRounds * 2
+	if state.currentForTest()["a"] != limit || state.currentForTest()["b"] != -limit {
+		t.Fatalf("current state = %#v, want saturated and clamped arithmetic", state.currentForTest())
 	}
 }
 
@@ -755,14 +753,14 @@ func TestRoundRobinSelectorPick_CursorKeyCap(t *testing.T) {
 	selector.mu.Lock()
 	defer selector.mu.Unlock()
 
-	if selector.cursors == nil {
-		t.Fatalf("selector.cursors = nil")
+	if selector.lastPicked == nil {
+		t.Fatalf("selector.lastPicked = nil")
 	}
-	if len(selector.cursors) != 1 {
-		t.Fatalf("len(selector.cursors) = %d, want %d", len(selector.cursors), 1)
+	if len(selector.lastPicked) != 1 {
+		t.Fatalf("len(selector.lastPicked) = %d, want %d", len(selector.lastPicked), 1)
 	}
-	if _, ok := selector.cursors["gemini:m3"]; !ok {
-		t.Fatalf("selector.cursors missing key %q", "gemini:m3")
+	if _, ok := selector.lastPicked["gemini:m3"]; !ok {
+		t.Fatalf("selector.lastPicked missing key %q", "gemini:m3")
 	}
 }
 

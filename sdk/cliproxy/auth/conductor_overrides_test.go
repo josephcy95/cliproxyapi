@@ -1080,11 +1080,24 @@ func TestManager_MarkResult_CloudflareChallenge_On403(t *testing.T) {
 		t.Fatalf("expected StatusMessage to be 'cloudflare challenge', got %s", state.StatusMessage)
 	}
 
-	// Because Cloudflare Challenge is treated as transient (no suspension),
-	// the model should NOT be suspended in the global registry, so count > 0.
-	if count := reg.GetModelCount(model); count <= 0 {
-		t.Fatalf("expected model count > 0 for cloudflare challenge transient cooldown, got %d", count)
+	// Registry routing follows the live transient cooldown, while public discovery
+	// continues to list the registered model for the fork's clients.
+	if count := reg.GetModelCount(model); count != 0 {
+		t.Fatalf("expected routing suspended during challenge cooldown, got %d", count)
 	}
+	listed := false
+	for _, info := range reg.GetAvailableModels("openai") {
+		if info["id"] == model {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatal("challenge cooldown hid the registered public model")
+	}
+	if updated.Disabled {
+		t.Fatal("challenge disabled the credential")
+	}
+
 }
 
 func TestManager_Execute_DisableCooling_DoesNotBlackoutAfter403(t *testing.T) {

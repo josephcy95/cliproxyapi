@@ -19,6 +19,10 @@ func statusFromError(err error) int {
 }
 
 func isAuthSelectionUnavailable(err error) bool {
+	var cooldown interface{ IsModelCooldown() bool }
+	if errors.As(err, &cooldown) && cooldown.IsModelCooldown() {
+		return false
+	}
 	var authErr *coreauth.Error
 	if !errors.As(err, &authErr) || authErr == nil {
 		return false
@@ -30,6 +34,11 @@ func isAuthSelectionUnavailable(err error) bool {
 func enrichAuthSelectionError(err error, providers []string, model string) error {
 	if err == nil {
 		return nil
+	}
+
+	var cooldown interface{ IsModelCooldown() bool }
+	if errors.As(err, &cooldown) && cooldown.IsModelCooldown() {
+		return err
 	}
 
 	var authErr *coreauth.Error
