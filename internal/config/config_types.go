@@ -240,6 +240,9 @@ type ProxyConnectionPoolConfig struct {
 
 // AntigravityConfig configures provider-wide Antigravity request behavior.
 type AntigravityConfig struct {
+	// ModelListMode controls discovery visibility, without disabling callable routes.
+	ModelListMode string `yaml:"model-list-mode,omitempty" json:"model-list-mode,omitempty"`
+
 	// SensitiveWords is a list of words to obfuscate with invisible combining grapheme joiners in system instructions.
 	SensitiveWords []string `yaml:"sensitive-words,omitempty" json:"sensitive-words,omitempty"`
 

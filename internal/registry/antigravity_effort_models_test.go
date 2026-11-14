@@ -49,3 +49,42 @@ func TestAntigravityEffortEntitlements(t *testing.T) {
 		}
 	}
 }
+
+func TestAntigravityEffortDiscoveryModes(t *testing.T) {
+	for _, mode := range []string{"canonical", "variants", "both", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			models := GroupAntigravityEffortModelsWithMode([]*ModelInfo{
+				{ID: "gemini-future-medium", Thinking: &ThinkingSupport{}},
+				{ID: "gemini-future-xhigh", Thinking: &ThinkingSupport{}},
+			}, mode)
+			if len(models) != 3 {
+				t.Fatalf("lost callable routes: %v", models)
+			}
+			visible := map[string]bool{}
+			for _, m := range models {
+				if !m.HiddenFromList {
+					visible[m.ID] = true
+				}
+			}
+			if visible["gemini-future"] != (mode != "variants") {
+				t.Fatal(visible)
+			}
+			for _, effort := range []string{"medium", "xhigh"} {
+				if visible["gemini-future-"+effort] != (mode == "variants" || mode == "both") {
+					t.Fatal(visible)
+				}
+			}
+			r := newTestModelRegistry()
+			r.RegisterClient("account", "antigravity", models)
+			for _, format := range []string{"openai", "claude", "gemini", "codex"} {
+				listed := r.GetAvailableModels(format)
+				if len(listed) != len(visible) {
+					t.Fatalf("%s: got %d, want %d", format, len(listed), len(visible))
+				}
+			}
+			if visible["gemini-future-high"] {
+				t.Fatal("invented unsupported variant")
+			}
+		})
+	}
+}

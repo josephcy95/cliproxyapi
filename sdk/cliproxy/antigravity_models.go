@@ -503,7 +503,7 @@ func (s *Service) antigravityModelsForHintsWithConfig(auth *coreauth.Auth, hints
 		excluded = strings.Split(value, ",")
 	}
 	models = applyExcludedModels(models, excluded)
-	models = registry.GroupAntigravityEffortModels(models)
+	models = registry.GroupAntigravityEffortModelsWithMode(models, cfg.Antigravity.ModelListMode)
 	models = applyExcludedModels(models, excluded)
 	models = applyOAuthModelAliasForAuth(cfg, "antigravity", auth.AuthKind(), auth.Attributes, models)
 	models = s.appendPluginModels("antigravity", models, excluded)

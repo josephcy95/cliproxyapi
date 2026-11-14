@@ -220,6 +220,9 @@ oauth:
         antigravity:
             antigravity-credits: true # Whether to use credits as last-resort fallback when all free-tier auths are exhausted for Claude models
             # Antigravity provider behavior.
+            # Model discovery: canonical (base + effort metadata), variants, or both.
+            # All names remain callable; only account-supported variants are listed.
+            model-list-mode: canonical
             # sensitive-words:             # optional: words to obfuscate with zero-width characters in system instructions
             #   - "API"
             #   - "proxy"

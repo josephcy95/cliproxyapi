@@ -3,6 +3,7 @@ package cliproxy
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -42,6 +43,39 @@ func TestAntigravityEffortPublicationHonorsExclusionsAliasesAndPrefixes(t *testi
 	for _, m := range models {
 		if len(m.AntigravityEffortModels) > 0 {
 			t.Fatal("excluded family published")
+		}
+	}
+}
+
+func TestAntigravityModelListModeReloadWithoutPluginHost(t *testing.T) {
+	resetAntigravityCapabilityCache()
+	t.Cleanup(resetAntigravityCapabilityCache)
+	svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+	auth, err := svc.coreManager.Register(t.Context(), antigravityTestAuth(t.Name(), "http://127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { svc.WaitAntigravityProbes(); registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+	hints := antigravityModelCapabilityHints{ModelIDs: map[string]struct{}{"gemini-3.8-flash-high": {}, "gemini-3.8-flash-medium": {}}, revision: 1}
+	key := svc.antigravityCapabilityKey(auth)
+	antigravityCapabilityMu.Lock()
+	antigravityCapabilityCache[key] = antigravityCapabilityCacheEntry{hints: hints, expiresAt: time.Now().Add(antigravityCapabilityCacheTTL)}
+	antigravityCapabilityMu.Unlock()
+	for _, mode := range []string{"canonical", "variants", "both", "canonical"} {
+		cfg := &config.Config{}
+		cfg.Antigravity.ModelListMode = mode
+		if !svc.applyConfigUpdateWithAuthSynthesis(t.Context(), cfg, false) {
+			t.Fatal("reload failed")
+		}
+		models := registry.GetGlobalRegistry().GetModelsForClient(auth.ID)
+		visible := map[string]bool{}
+		for _, m := range models {
+			if !m.HiddenFromList {
+				visible[m.ID] = true
+			}
+		}
+		if visible["gemini-3.8-flash"] != (mode != "variants") || visible["gemini-3.8-flash-high"] != (mode != "canonical") {
+			t.Fatalf("%s: %v", mode, visible)
 		}
 	}
 }

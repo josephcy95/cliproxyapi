@@ -146,6 +146,10 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 			models = registry.GetAntigravityModels()
 		}
 		models = applyExcludedModels(models, excluded)
+		if cfg != nil && cfg.Home.Enabled {
+			models = registry.GroupAntigravityEffortModelsWithMode(models, cfg.Antigravity.ModelListMode)
+			models = applyExcludedModels(models, excluded)
+		}
 	case "claude":
 		models = registry.GetClaudeModels()
 		if entry := resolveConfigClaudeKeyForConfig(cfg, a); entry != nil {

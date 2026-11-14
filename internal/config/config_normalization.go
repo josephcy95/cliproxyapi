@@ -391,6 +391,12 @@ func (cfg *Config) SanitizeAntigravity() {
 	if cfg == nil {
 		return
 	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Antigravity.ModelListMode)) {
+	case "variants", "both":
+		cfg.Antigravity.ModelListMode = strings.ToLower(strings.TrimSpace(cfg.Antigravity.ModelListMode))
+	default:
+		cfg.Antigravity.ModelListMode = "canonical"
+	}
 	cfg.Antigravity.SensitiveWordsReplace = NormalizeSensitiveWordsReplace(cfg.Antigravity.SensitiveWordsReplace)
 }
 

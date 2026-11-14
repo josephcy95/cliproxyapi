@@ -262,6 +262,12 @@ func (s *Service) applyConfigRuntime(ctx context.Context, commit configCommit, s
 	if errContext := ctx.Err(); errContext != nil {
 		return false
 	}
+	// Rebuild discovery from cached account capabilities even without a plugin host.
+	for _, auth := range auths {
+		if auth != nil && strings.EqualFold(auth.Provider, "antigravity") {
+			s.registerModelsForAuth(registrationCtx, auth)
+		}
+	}
 	s.syncPluginModelRuntime(registrationCtx)
 	return ctx.Err() == nil
 }

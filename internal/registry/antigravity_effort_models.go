@@ -64,6 +64,12 @@ func ExpandAntigravityEffortModels(filtered, catalog []*ModelInfo, entitled map[
 // GroupAntigravityEffortModels publishes one family and preserves hidden legacy routes.
 // Only variants present after account filtering contribute supported efforts.
 func GroupAntigravityEffortModels(models []*ModelInfo) []*ModelInfo {
+	return GroupAntigravityEffortModelsWithMode(models, "canonical")
+}
+
+// GroupAntigravityEffortModelsWithMode changes discovery only; all routes stay registered.
+func GroupAntigravityEffortModelsWithMode(models []*ModelInfo, mode string) []*ModelInfo {
+	mode = strings.ToLower(strings.TrimSpace(mode))
 	result := make([]*ModelInfo, 0, len(models))
 	families := map[string]*ModelInfo{}
 	for _, source := range models {
@@ -79,7 +85,8 @@ func GroupAntigravityEffortModels(models []*ModelInfo) []*ModelInfo {
 		family := families[base]
 		if family == nil {
 			family = cloneModelInfo(m)
-			family.HiddenFromList = false
+			family.HiddenFromList = mode == "variants"
+			family.AntigravityFixedEffort = ""
 			family.ID = base
 			family.Name = base
 			// Display labels may already omit the effort in the catalog.
@@ -94,7 +101,9 @@ func GroupAntigravityEffortModels(models []*ModelInfo) []*ModelInfo {
 			result = append(result, family)
 		}
 		family.AntigravityEffortModels[effort] = m.ID
-		m.HiddenFromList = true
+		m.HiddenFromList = mode != "variants" && mode != "both"
+		m.AntigravityFixedEffort = effort
+		m.Thinking.Levels = []string{effort}
 		result = append(result, m)
 	}
 	for _, family := range families {

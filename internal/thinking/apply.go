@@ -386,7 +386,9 @@ func applyThinkingDocCore(doc *ojson.Doc, docValid bool, sourceBody []byte, mode
 
 	// 4. Get config: suffix priority over body
 	var config ThinkingConfig
-	if suffixResult.HasSuffix {
+	if modelInfo.AntigravityFixedEffort != "" && providerKey == "antigravity" {
+		config = ThinkingConfig{Mode: ModeLevel, Level: ThinkingLevel(modelInfo.AntigravityFixedEffort)}
+	} else if suffixResult.HasSuffix {
 		config = parseSuffixToConfig(suffixResult.RawSuffix, providerFormat, model)
 		if !hasThinkingConfig(config) && !nativeResponses && strings.TrimSpace(suffixResult.RawSuffix) != "" && !strings.EqualFold(strings.TrimSpace(modelInfo.ID), strings.TrimSpace(model)) {
 			config = ThinkingConfig{Mode: ModeLevel, Level: ThinkingLevel(strings.TrimSpace(suffixResult.RawSuffix))}

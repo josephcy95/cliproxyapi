@@ -43,6 +43,8 @@ type ModelInfo struct {
 	// AntigravityEffortModels maps supported efforts to account-entitled wire IDs.
 	AntigravityEffortModels  map[string]string `json:"-"`
 	AntigravityDefaultEffort string            `json:"-"`
+	// AntigravityFixedEffort pins an explicit variant independently of body effort.
+	AntigravityFixedEffort string `json:"-"`
 	// ID is the unique identifier for the model
 	ID string `json:"id"`
 	// MetadataModelID identifies the canonical model used to resolve client metadata.

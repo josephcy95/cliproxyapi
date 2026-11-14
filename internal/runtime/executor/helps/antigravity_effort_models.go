@@ -12,7 +12,20 @@ import (
 // account's union of entitlements. Legacy suffixed IDs remain literal wire IDs.
 func ResolveAntigravityEffortModel(authID, model string, doc *ojson.Doc) (string, error) {
 	for _, info := range registry.GetGlobalRegistry().GetModelsForClient(authID) {
-		if (info.ID != model && info.MetadataModelID != model) || len(info.AntigravityEffortModels) == 0 {
+		if info.ID != model && info.MetadataModelID != model {
+			continue
+		}
+		if info.AntigravityFixedEffort != "" {
+			if err := doc.Set("request.generationConfig.thinkingConfig.thinkingLevel", info.AntigravityFixedEffort); err != nil {
+				return "", err
+			}
+			_ = doc.Delete("request.generationConfig.thinkingConfig.thinkingBudget")
+			if info.MetadataModelID != "" {
+				return info.MetadataModelID, nil
+			}
+			return info.ID, nil
+		}
+		if len(info.AntigravityEffortModels) == 0 {
 			continue
 		}
 		effort := strings.ToLower(doc.Get("request.generationConfig.thinkingConfig.thinkingLevel").String())
