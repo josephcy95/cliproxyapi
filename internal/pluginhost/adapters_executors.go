@@ -620,11 +620,45 @@ func (a *executorAdapter) prepareExecutorCall(req coreexecutor.Request, opts cor
 	nativeOpts := opts
 	var updatesChanged bool
 	if inputRequested != "" && inputRequested != inputFormat {
+		translationBody := req.Payload
+		// Custom plugin models have no Claude-scoped catalog entry. Preserve
+		// their omitted output limit without borrowing another provider's metadata.
+		limitInfo := modelInfo
+		if resolved, ok := coreauth.ResolvedModelInfo(req); ok {
+			limitInfo = resolved
+		}
+		if inputFormat == sdktranslator.FormatClaude && limitInfo != nil && limitInfo.MaxCompletionTokens > 0 && registry.LookupModelInfo(baseModel, "claude") == nil {
+			source := ojson.NewDoc(req.Payload)
+			key := ""
+			defaultLimit := true
+			switch inputRequested {
+			case sdktranslator.FormatOpenAI:
+				if !source.Get("max_tokens").Exists() && !source.Get("max_completion_tokens").Exists() {
+					key = "max_tokens"
+				}
+			case sdktranslator.FormatOpenAIResponse:
+				value := source.Get("max_output_tokens")
+				defaultLimit = !value.Exists() || value.Type == ojson.Null
+				if defaultLimit || value.Int() > int64(limitInfo.MaxCompletionTokens) {
+					key = "max_output_tokens"
+				}
+			}
+			if key != "" {
+				limit := limitInfo.MaxCompletionTokens
+				// Match the Claude translators' conservative Fable default.
+				if defaultLimit && strings.Contains(strings.ToLower(baseModel), "fable") && limit > 64000 {
+					limit = 64000
+				}
+				if errSet := source.Set(key, limit); errSet == nil {
+					translationBody = source.Bytes()
+				}
+			}
+		}
 		translated := sdktranslator.TranslateRequestEnvelope(context.Background(), inputRequested, inputFormat, sdktranslator.RequestEnvelope{
 			Format: inputRequested,
 			Model:  baseModel,
 			Stream: opts.Stream,
-			Body:   req.Payload,
+			Body:   translationBody,
 		})
 		if translated.Err != nil {
 			return preparedExecutorCall{}, translated.Err

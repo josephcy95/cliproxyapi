@@ -502,3 +502,47 @@ func TestExecutorAdapterAppliesThinkingBeforePayloadRules(t *testing.T) {
 		}
 	}
 }
+
+func TestExecutorAdapterClaudeTranslationPreservesPluginOutputLimit(t *testing.T) {
+	const provider = "plugin-claude-output-limit"
+	const model = "custom-claude-limit"
+	info := &registry.ModelInfo{ID: model, MaxCompletionTokens: 65536, Thinking: &registry.ThinkingSupport{Levels: []string{"low", "medium", "high"}}}
+	host := New()
+	host.providerModels = map[string][]*registryModelInfo{provider: {info}}
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(t.Name(), provider, []*registry.ModelInfo{info})
+	t.Cleanup(func() { reg.UnregisterClient(t.Name()) })
+	for _, format := range []sdktranslator.Format{sdktranslator.FormatOpenAI, sdktranslator.FormatOpenAIResponse} {
+		for _, requested := range []int64{0, 8192, 100000} {
+			source := `{"model":"custom-claude-limit","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`
+			if format == sdktranslator.FormatOpenAIResponse {
+				source = `{"model":"custom-claude-limit","input":"hi","reasoning":{"effort":"high"}}`
+			}
+			doc := ojson.NewDoc([]byte(source))
+			want := int64(65536)
+			if requested > 0 {
+				want = requested
+				if format == sdktranslator.FormatOpenAIResponse && want > 65536 {
+					want = 65536
+				}
+				key := "max_tokens"
+				if format == sdktranslator.FormatOpenAIResponse {
+					key = "max_output_tokens"
+				}
+				_ = doc.Set(key, requested)
+			}
+			adapter := newExecutorAdapterForRecordForTest(host, capabilityRecord{id: t.Name()}, &fakeExecutor{identifier: provider}, []sdktranslator.Format{sdktranslator.FormatClaude}, []sdktranslator.Format{sdktranslator.FormatClaude})
+			adapter.provider = provider
+			prepared, err := adapter.prepareExecutorCall(coreexecutor.Request{Model: model, Payload: doc.Bytes()}, coreexecutor.Options{SourceFormat: format, ResponseFormat: sdktranslator.FormatClaude})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := ojson.GetBytes(prepared.req.Payload, "max_tokens").Int(); got != want {
+				t.Fatalf("%s requested=%d: max_tokens=%d, want %d: %s", format, requested, got, want, prepared.req.Payload)
+			}
+			if got := ojson.GetBytes(prepared.req.Payload, "thinking.type").String(); got != "adaptive" {
+				t.Fatalf("lost adaptive thinking: %s", prepared.req.Payload)
+			}
+		}
+	}
+}

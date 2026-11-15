@@ -167,3 +167,24 @@ func TestModelContextStatusReportsFallbackSource(t *testing.T) {
 		t.Fatalf("context length = %d, want the override to win", statuses[0].ContextLength)
 	}
 }
+
+func TestLookupModelInfoProviderFallbackPreservesContextOverride(t *testing.T) {
+	const model = "gemini-4-hydrogen"
+	SetModelContextOverrides(map[string]ModelContextOverride{model: {ContextLength: 262144, MaxCompletionTokens: 32768}})
+	t.Cleanup(func() { SetModelContextOverrides(nil) })
+	reg := GetGlobalRegistry()
+	reg.RegisterClient(t.Name(), "other-provider", []*ModelInfo{{ID: model, UserDefined: true}})
+	t.Cleanup(func() { reg.UnregisterClient(t.Name()) })
+	for _, provider := range []string{"vertex", "aistudio"} {
+		info := LookupModelInfo(model, provider)
+		if info == nil || info.UserDefined || info.Thinking == nil {
+			t.Fatalf("%s: lost provider catalog: %+v", provider, info)
+		}
+		if info.ContextLength != 262144 || info.MaxCompletionTokens != 32768 {
+			t.Fatalf("%s: lost context override: %+v", provider, info)
+		}
+	}
+	if LookupStaticModelInfoByChannel(model, "vertex").ContextLength == 262144 {
+		t.Fatal("mutated static catalog")
+	}
+}
