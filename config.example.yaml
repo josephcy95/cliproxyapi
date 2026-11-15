@@ -223,11 +223,15 @@ oauth:
             # Model discovery: canonical (base + effort metadata), variants, or both.
             # All names remain callable; only account-supported variants are listed.
             model-list-mode: canonical
+            # tos-pause-window: "0" # Pool-wide pause disabled; set e.g. "6h" to enable.
             # sensitive-words:             # optional: words to obfuscate with zero-width characters in system instructions
             #   - "API"
             #   - "proxy"
             # sensitive-words-replace:     # optional literal replacements in system instructions
             #   "sensitive phrase": "replacement"
+            # sensitive-patterns-replace: # Ordered Go RE2 rules; empty replacement deletes matches.
+            #   - pattern: "sensitive pattern"
+            #     replacement: ""
             # connection-pool:             # optional: upstream HTTP connection pool settings
             #   enabled: false             # whether to enable connection pooling (default: false; set to true to enable connection pooling)
             #   idle-conn-timeout: "30s"   # idle keep-alive timeout (default: 30s, capped at 210s)
@@ -239,6 +243,9 @@ oauth:
         #     - "proxy"
         #   sensitive-words-replace:
         #     "sensitive phrase": "replacement"
+        #   sensitive-patterns-replace:
+        #     - pattern: "sensitive pattern"
+        #       replacement: ""
         codex:
             signin-with-chatgpt-identifier: "CLIProxyAPI"
             identity-confuse: false
@@ -1397,6 +1404,11 @@ upstream:
 #             sensitive-words:             # optional: words to obfuscate with zero-width characters
 #               - "API"
 #               - "proxy"
+#             sensitive-words-replace:     # optional: literal sensitive-word replacements ("target": "replacement")
+#               "Claude Code": "Claude"
+#             sensitive-patterns-replace:  # optional: ordered Go RE2 regex replacements ("replacement": "" deletes matches)
+#               - pattern: '(?m)^You are omp[^\n]*\n?'
+#                 replacement: ""
 #             cache-user-id: true          # optional: default is false; set true to reuse cached user_id per API key instead of generating a random one each request
 #             # Every custom tool on a cloaked OAuth request automatically uses a caller-stable opaque mcp__<server>__<tool> alias.
 #

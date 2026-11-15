@@ -269,6 +269,9 @@ func (s *Service) applyConfigRuntime(ctx context.Context, commit configCommit, s
 		}
 	}
 	s.syncPluginModelRuntime(registrationCtx)
+	if ctx.Err() == nil && s.hooks.OnConfigApplied != nil {
+		s.hooks.OnConfigApplied(s, cfg)
+	}
 	return ctx.Err() == nil
 }
 

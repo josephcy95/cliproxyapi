@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -91,16 +92,18 @@ func TestPluginErrorCarriesRetryAfterIntoCooldownAndHTTPHeader(t *testing.T) {
 	if errExec == nil {
 		t.Fatal("authMgr.Execute returned nil error")
 	}
-	if got := coreauth.SafeResponseHeaders(errExec).Get("Retry-After"); got != "7" {
-		t.Fatalf("SafeResponseHeaders(errExec) Retry-After = %q, want 7", got)
+	// The decoded plugin hint stays 7s above; the terminal pool response must
+	// advertise the recorded 10s minimum cooldown so clients do not retry early.
+	if got := coreauth.SafeResponseHeaders(errExec).Get("Retry-After"); got != "10" {
+		t.Fatalf("SafeResponseHeaders(errExec) Retry-After = %q, want 10 (pool cooldown floor)", got)
 	}
 	updated, okAuth := authMgr.GetByID(authID)
 	if !okAuth || updated == nil {
 		t.Fatalf("GetByID(%q) missing", authID)
 	}
 	state := updated.ModelStates[model]
-	if state == nil || !state.NextRetryAfter.After(before.Add(5*time.Second)) {
-		t.Fatalf("model NextRetryAfter = %v, want at least %v (7s cooldown)", state, before.Add(7*time.Second))
+	if state == nil || state.NextRetryAfter.Before(before.Add(10*time.Second)) {
+		t.Fatalf("model NextRetryAfter = %v, want at least %v (pool cooldown floor)", state, before.Add(10*time.Second))
 	}
 }
 
@@ -263,6 +266,7 @@ func TestCallPluginSchedulerPickCompatibility(t *testing.T) {
 		wantReject   bool
 		wantCode     string
 		wantReason   string
+		wantExclude  []string
 	}{
 		{
 			name:         "legacy pascal case auth id",
@@ -304,6 +308,19 @@ func TestCallPluginSchedulerPickCompatibility(t *testing.T) {
 			wantCode:    "quota_exceeded",
 			wantReason:  "quota exhausted",
 		},
+		{
+			name:        "pascal case exclude candidates unhandled",
+			resultJSON:  `{"Handled":false,"ExcludeCandidates":["ag-1","ag-2"]}`,
+			wantHandled: false,
+			wantExclude: []string{"ag-1", "ag-2"},
+		},
+		{
+			name:         "snake case exclude candidates with delegate",
+			resultJSON:   `{"handled":true,"delegate_builtin":"round-robin","exclude_candidates":["ag-1","ag-3"]}`,
+			wantHandled:  true,
+			wantDelegate: "round-robin",
+			wantExclude:  []string{"ag-1", "ag-3"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -339,6 +356,9 @@ func TestCallPluginSchedulerPickCompatibility(t *testing.T) {
 			}
 			if resp.RejectReason != tc.wantReason {
 				t.Fatalf("RejectReason = %q, want %q", resp.RejectReason, tc.wantReason)
+			}
+			if !slices.Equal(resp.ExcludeCandidates, tc.wantExclude) {
+				t.Fatalf("ExcludeCandidates = %v, want %v", resp.ExcludeCandidates, tc.wantExclude)
 			}
 		})
 	}
