@@ -3,11 +3,11 @@ package auth
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/json"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/tidwall/gjson"
 )
@@ -71,10 +71,17 @@ func newStreamBootstrapError(err error, headers http.Header) error {
 	if err == nil {
 		return nil
 	}
-	return &streamBootstrapError{
+	upstreamAttempt := hasUpstreamExecutionAttempt(err)
+	provider := upstreamAttemptProviderFromError(err)
+	err = unwrapUpstreamExecutionAttempt(err)
+	bootstrapErr := &streamBootstrapError{
 		cause:   err,
 		headers: cloneHTTPHeader(headers),
 	}
+	if upstreamAttempt {
+		return markUpstreamExecutionAttemptWithProvider(bootstrapErr, provider)
+	}
+	return bootstrapErr
 }
 
 func (e *streamBootstrapError) Error() string {
@@ -205,6 +212,9 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 				return false
 			}
 			if chunk.Err != nil {
+				if session := continuitySessionFromContext(ctx); session != nil {
+					session.setLastStreamProvider(provider)
+				}
 				if ctx == nil {
 					out <- chunk
 					return true
@@ -452,7 +462,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		_, didRefreshOnUnauthorized = unauthorizedRefreshTried[auth.ID]
 	}
 	for idx, execModel := range execModels {
-		ctx = m.newUpstreamAttemptContext(ctx)
+		ctx = withUpstreamAttemptProvider(m.newUpstreamAttemptContext(ctx), provider)
 		resultModel := m.stateModelForExecution(auth, routeModel, execModel, pooled)
 		execReq := req
 		execReq.Model = execModel

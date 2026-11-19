@@ -80,3 +80,23 @@ func TestDesensitizationFailClosedSkipsNonJSON(t *testing.T) {
 		t.Fatalf("payload changed: %q", gotReq.Payload)
 	}
 }
+
+func TestDesensitizationRestoresNonStreamResponseWithoutPluginHost(t *testing.T) {
+	cfg := config.DefaultDesensitizationConfig()
+	cfg.Enabled = true
+	engine := desensitization.Configure(cfg)
+	t.Cleanup(func() { desensitization.Configure(config.DefaultDesensitizationConfig()) })
+
+	const requestID = "restore-without-plugin-host"
+	const original = `{"message":"contact fixture@example.test"}`
+	masked, err := engine.MaskJSONBody(desensitization.SessionIDFromMetadata(nil, requestID), "gpt-test", "gpt-test", "openai", []byte(original))
+	if err != nil || string(masked) == original {
+		t.Fatalf("mask fixture: body=%s error=%v", masked, err)
+	}
+	handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil)
+	body, _ := handler.applyResponseInterceptors(t.Context(), "", requestID, "openai", "gpt-test", "gpt-test",
+		coreexecutor.Options{}, nil, nil, nil, nil, masked, http.StatusOK, "", false)
+	if string(body) != original {
+		t.Fatalf("restored response = %s, want %s", body, original)
+	}
+}

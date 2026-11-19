@@ -5,9 +5,9 @@ package executor
 
 import (
 	"os"
+	"strings"
 
 	"github.com/MoeForge/moego/ojson"
-	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexinstructions"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -115,7 +115,7 @@ func applyCodexConfiguredInstructionsDoc(cfg *config.Config, auth *cliproxyauth.
 		return
 	}
 	body := applyCodexConfiguredInstructions(cfg, auth, model, doc.Bytes(), opts)
-	if instructions := ojson.GetBytesNoCopy(body, "instructions"); instructions.Exists() {
+	if instructions := ojson.GetBytesNoCopy(body, "instructions"); instructions.Raw != doc.Get("instructions").Raw {
 		_ = doc.Set("instructions", instructions.String())
 	}
 }

@@ -39,4 +39,8 @@ func TestPoolCooldownRespectsReservedPrivateInstructionsAuths(t *testing.T) {
 	if unblocked || !ok || !got.Equal(deadline) {
 		t.Fatalf("reserved auth distorted pool deadline: %v, unblocked=%v ok=%v", got, unblocked, ok)
 	}
+	candidates := manager.buildCodexContinuityCandidates(context.Background(), []string{"codex"}, "sync-pool-model", cliproxyexecutor.Options{}, 0, false, 0, now)
+	if len(candidates) != 1 || candidates[0].ID != "sync-pool-normal" {
+		t.Fatalf("continuity candidates = %+v, want only the unreserved credential", candidates)
+	}
 }

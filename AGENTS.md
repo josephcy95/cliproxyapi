@@ -118,6 +118,8 @@ On conflicts: apply the category tie-breaker. For bucket 2, **keep fork features
 - Private-instructions policy unit tests under `sdk/cliproxy/auth/`
 
 ### Ship policy
+For every upstream sync with changes to ship, finish the preservation gate, commit the merge, push `main` to `origin`, tag the next fork version, and verify the GitHub release and its assets. In the handoff, list what was discarded, combined, improved, and deliberately left out, including cleanly applied changes. Include the upstream ref, merge SHA, verification results, and release link.
+
 See workspace parent `../AGENTS.md` if present. In short:
 - **Minor** → no push/tag/release unless asked (commit only if needed).
 - **Medium** → commit when done; offer push/release.
