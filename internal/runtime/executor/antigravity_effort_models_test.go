@@ -69,8 +69,8 @@ func TestAntigravityExecutorCanonicalEffortRouting(t *testing.T) {
 						if got := ojson.GetBytes(captured, "model").String(); got != "gemini-3.8-flash-"+wantLevel {
 							t.Fatalf("wire model=%q, payload=%s", got, captured)
 						}
-						if got := ojson.GetBytes(captured, "request.generationConfig.thinkingConfig.thinkingLevel").String(); got != wantLevel {
-							t.Fatalf("wire effort=%q, want %s", got, level)
+						if got := ojson.GetBytes(captured, "request.generationConfig.thinkingConfig.thinkingLevel").String(); got != strings.ToUpper(wantLevel) {
+							t.Fatalf("wire effort=%q, want %s", got, strings.ToUpper(wantLevel))
 						}
 					})
 				}

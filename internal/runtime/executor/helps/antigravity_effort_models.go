@@ -16,7 +16,7 @@ func ResolveAntigravityEffortModel(authID, model string, doc *ojson.Doc) (string
 			continue
 		}
 		if info.AntigravityFixedEffort != "" {
-			if err := doc.Set("request.generationConfig.thinkingConfig.thinkingLevel", info.AntigravityFixedEffort); err != nil {
+			if err := doc.Set("request.generationConfig.thinkingConfig.thinkingLevel", strings.ToUpper(info.AntigravityFixedEffort)); err != nil {
 				return "", err
 			}
 			_ = doc.Delete("request.generationConfig.thinkingConfig.thinkingBudget")

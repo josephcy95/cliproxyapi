@@ -56,7 +56,7 @@ func TestApplyLevelUsesLevelFormatForLevelCapableModel(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	if got := gjson.GetBytes(out, "request.generationConfig.thinkingConfig.thinkingLevel").String(); got != "high" {
-		t.Fatalf("thinkingLevel = %q, want high for a level-capable model: %s", got, out)
+	if got := gjson.GetBytes(out, "request.generationConfig.thinkingConfig.thinkingLevel").String(); got != "HIGH" {
+		t.Fatalf("thinkingLevel = %q, want HIGH for a level-capable model: %s", got, out)
 	}
 }
